@@ -1,0 +1,58 @@
+@import "tailwindcss";
+
+:root {
+  --background: #0c0c0f;
+  --foreground: #fafafa;
+  --glass-bg: rgba(255, 255, 255, 0.06);
+  --glass-border: rgba(255, 255, 255, 0.12);
+  --glass-highlight: rgba(255, 255, 255, 0.08);
+  --primary: #7c3aed;
+  --primary-foreground: #fff;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  min-height: 100dvh;
+}
+
+/* Liquid Glass : glassmorphism avec reflets */
+.liquid-glass-nav {
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+.liquid-glass-inner {
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--glass-border);
+  box-shadow:
+    0 0 0 1px var(--glass-highlight) inset,
+    0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.liquid-glass-player .liquid-glass-inner {
+  box-shadow:
+    0 0 0 1px var(--glass-highlight) inset,
+    0 8px 32px rgba(0, 0, 0, 0.25),
+    0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.safe-area-pb {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+}
+
+/* Safe area pour le contenu au-dessus du player + nav */
+.main-content-padding {
+  padding-bottom: calc(8rem + env(safe-area-inset-bottom, 0px));
+}

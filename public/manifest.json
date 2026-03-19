@@ -1,0 +1,18 @@
+{
+  "name": "HOUÉE",
+  "short_name": "HOUÉE",
+  "description": "L'application musicale exclusive",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "icons": [
+  {
+    "src": "/logo.png",
+    "sizes": "any",
+    "type": "image/png",
+    "purpose": "any maskable"
+  }
+  ]
+}
