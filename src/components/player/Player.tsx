@@ -11,6 +11,9 @@ export function Player() {
   const playerContainerRef = useRef(null);
   const ytPlayerInstance = useRef(null);
   const progressInterval = useRef(null);
+  
+  const isReady = useRef(false);
+  const pendingVideoId = useRef<string | null>(null);
 
   const onEndedRef = useRef(onEnded);
   const onDurationRef = useRef(onDuration);
@@ -42,8 +45,14 @@ export function Player() {
         },
         events: {
           onReady: (event) => {
+            isReady.current = true;
             event.target.setVolume(volume * 100);
-            if (videoId) {
+            
+            // Si une vidéo était en attente pendant le chargement du lecteur
+            if (pendingVideoId.current) {
+              event.target.loadVideoById(pendingVideoId.current);
+              pendingVideoId.current = null;
+            } else if (videoId) {
               event.target.loadVideoById(videoId);
             }
           },
@@ -86,24 +95,34 @@ export function Player() {
     return () => clearInterval(progressInterval.current);
   }, []);
 
-  // 🟢 L'ÉCOUTEUR DU HACK IOS
-  // Il capte le signal synchrone émis par le MusicContext et force la lecture instantanée
+  // 🟢 HACK IOS : handleIOSUnlock lit maintenant le videoId depuis l'événement
   useEffect(() => {
-    const handleIOSUnlock = () => {
-      if (ytPlayerInstance.current && ytPlayerInstance.current.playVideo) {
-        // Le lecteur démarre dans la même milliseconde que ton clic
-        ytPlayerInstance.current.playVideo();
+    const handleIOSUnlock = (e: CustomEvent) => {
+      const player = ytPlayerInstance.current;
+      if (!player?.playVideo) return;
+
+      const vId = e.detail?.videoId;
+      if (vId) {
+        // Cache hit : on charge ET joue dans la fenêtre gestuelle d'iOS
+        player.loadVideoById(vId);
+      } else {
+        // Cache miss : warm-up seulement, loadVideoById viendra après
+        player.playVideo();
       }
     };
-    
-    window.addEventListener("iosUnlock", handleIOSUnlock);
-    return () => window.removeEventListener("iosUnlock", handleIOSUnlock);
+
+    window.addEventListener("iosUnlock", handleIOSUnlock as EventListener);
+    return () => window.removeEventListener("iosUnlock", handleIOSUnlock as EventListener);
   }, []);
 
+  // Changement de vidéo géré par React
   useEffect(() => {
-    if (ytPlayerInstance.current && ytPlayerInstance.current.loadVideoById && videoId) {
-      ytPlayerInstance.current.loadVideoById(videoId);
+    const player = ytPlayerInstance.current;
+    if (!videoId || !player?.loadVideoById || !isReady.current) {
+      if (videoId) pendingVideoId.current = videoId;
+      return;
     }
+    player.loadVideoById(videoId);
   }, [videoId]);
 
   useEffect(() => {

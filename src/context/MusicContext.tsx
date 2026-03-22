@@ -88,16 +88,12 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   const listenAccumulatorRef = useRef(0);
   const lastPlayedSecondsRef = useRef(0);
 
-  // 🟢 L'UNLOCKER IOS MAGIQUE
-  // Cette fonction s'exécute à la milliseconde exacte où le doigt touche l'écran
-  const unlockAudio = useCallback(() => {
-    if (typeof window !== "undefined") {
-      // 1. On lance un son vide (silence de 0.1s) pour déverrouiller Safari
-      const audio = new Audio("data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA");
-      audio.play().catch(() => {});
-      // 2. On prévient le lecteur YouTube de se tenir prêt
-      window.dispatchEvent(new Event("iosUnlock"));
-    }
+  // 1. unlockAudio accepte un videoId optionnel
+  const unlockAudio = useCallback((videoId?: string) => {
+    if (typeof window === "undefined") return;
+    const audio = new Audio("data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA");
+    audio.play().catch(() => {});
+    window.dispatchEvent(new CustomEvent("iosUnlock", { detail: { videoId } }));
   }, []);
 
   useEffect(() => {
@@ -377,6 +373,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     return () => clearTimeout(syncTimeout);
   }, [user, currentTrack, status]);
 
+  // 2. Dans loadAndPlayUrl, passer le videoId à unlockAudio dès qu'on l'a
   const loadAndPlayUrl = useCallback(async (track: Track) => {
     if (typeof document !== "undefined") {
       document.querySelectorAll('audio').forEach(audio => {
@@ -397,12 +394,18 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     lastPlayedSecondsRef.current = 0; 
     currentTimeRef.current = 0; 
 
-    if (ytCacheRef.current[track.id] && isValidYTId(ytCacheRef.current[track.id])) {
-      setPlayingUrl(`https://www.youtube.com/watch?v=${ytCacheRef.current[track.id]}`);
+    // ✅ Cache hit : on connaît le videoId immédiatement
+    const cachedId = ytCacheRef.current[track.id];
+    if (cachedId && isValidYTId(cachedId)) {
+      unlockAudio(cachedId); // ← videoId connu, iframe se lance direct dans la fenêtre gestuelle
+      setPlayingUrl(`https://www.youtube.com/watch?v=${cachedId}`);
       setStatus("playing");
       prefetchNextLogic();
       return;
     }
+
+    // ✅ Cache miss : warm-up de l'iframe (sans videoId), puis fetch
+    unlockAudio();
 
     try {
       const query = `${track.artist} ${track.title} audio -"full album" -"1 hour" -"live" -"compilation"`;
@@ -421,11 +424,10 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       console.error("Erreur API :", error);
       setStatus("idle");
     }
-  }, [prefetchNextLogic, syncDbStats, updateTopTracks, saveToCache]);
+  }, [prefetchNextLogic, syncDbStats, updateTopTracks, saveToCache, unlockAudio]);
 
   const playTrack = useCallback(async (track: Track, newQueue?: Track[]) => {
-    unlockAudio(); // 🟢 Déblocage iOS instantané !
-    
+    // ❌ Plus de unlockAudio() manuel ici
     if (newQueue && newQueue.length > 0) {
       setQueue(newQueue);
       queueRef.current = newQueue;
@@ -441,7 +443,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       }
     }
     await loadAndPlayUrl(track);
-  }, [loadAndPlayUrl, unlockAudio]);
+  }, [loadAndPlayUrl]);
 
   const playRadioTrack = useCallback(async () => {
     const lastTrack = currentTrack;
@@ -473,8 +475,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   }, [currentTrack, loadAndPlayUrl]);
 
   const playNext = useCallback(() => {
-    unlockAudio(); // 🟢 Déblocage iOS instantané !
-    
+    // ❌ Plus de unlockAudio() manuel ici
     const q = queueRef.current;
     
     const handlePlaylistEnd = () => {
@@ -530,11 +531,10 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     if (nextTrack) {
       loadAndPlayUrl(nextTrack);
     }
-  }, [loadAndPlayUrl, playRadioTrack, unlockAudio]);
+  }, [loadAndPlayUrl, playRadioTrack]);
 
   const playPrev = useCallback(() => {
-    unlockAudio(); // 🟢 Déblocage iOS instantané !
-    
+    // ❌ Plus de unlockAudio() manuel ici
     const q = queueRef.current;
     if (currentTimeRef.current > 3) {
       setSeekRequest(0);
@@ -553,7 +553,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       const prevTrack = q[q.length - 1];
       loadAndPlayUrl(prevTrack);
     }
-  }, [loadAndPlayUrl, unlockAudio]);
+  }, [loadAndPlayUrl]);
 
   const toggleShuffle = useCallback(() => {
     isShuffleRef.current = !isShuffleRef.current;
@@ -568,7 +568,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const togglePlayPause = useCallback(() => {
-    unlockAudio(); // 🟢 Déblocage iOS instantané !
+    unlockAudio(); // ← On garde ici car pas de loadAndPlayUrl impliqué
     
     if (status === "playing") {
       setStatus("paused");
