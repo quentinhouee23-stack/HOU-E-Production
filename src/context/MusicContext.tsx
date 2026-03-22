@@ -51,7 +51,6 @@ function getISOWeek(date: Date) {
   return d.getUTCFullYear() + "-W" + Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1)/7);
 }
 
-// 🟢 LE VIDEUR INTRANSIGEANT : Un ID YouTube fait EXACTEMENT 11 caractères.
 const isValidYTId = (id: string | null | undefined) => {
   return typeof id === "string" && id.length === 11;
 };
@@ -89,6 +88,18 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   const listenAccumulatorRef = useRef(0);
   const lastPlayedSecondsRef = useRef(0);
 
+  // 🟢 L'UNLOCKER IOS MAGIQUE
+  // Cette fonction s'exécute à la milliseconde exacte où le doigt touche l'écran
+  const unlockAudio = useCallback(() => {
+    if (typeof window !== "undefined") {
+      // 1. On lance un son vide (silence de 0.1s) pour déverrouiller Safari
+      const audio = new Audio("data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA");
+      audio.play().catch(() => {});
+      // 2. On prévient le lecteur YouTube de se tenir prêt
+      window.dispatchEvent(new Event("iosUnlock"));
+    }
+  }, []);
+
   useEffect(() => {
     try {
       let currentCache = {};
@@ -96,7 +107,6 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       
       if (savedCache) {
         const rawCache = JSON.parse(savedCache);
-        // 🟢 LE GRAND MÉNAGE : On supprime toutes les fausses URL (undefined, null, etc.) du téléphone
         for (const key in rawCache) {
           if (isValidYTId(rawCache[key])) {
             currentCache[key] = rawCache[key];
@@ -160,7 +170,6 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     try {
       localStorage.setItem("stream_yt_cache", JSON.stringify(ytCacheRef.current));
     } catch (e) {
-      console.warn("Cache plein, on le vide partiellement");
       const keys = Object.keys(ytCacheRef.current);
       if (keys.length > 200) {
         const newCache = {};
@@ -415,6 +424,8 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   }, [prefetchNextLogic, syncDbStats, updateTopTracks, saveToCache]);
 
   const playTrack = useCallback(async (track: Track, newQueue?: Track[]) => {
+    unlockAudio(); // 🟢 Déblocage iOS instantané !
+    
     if (newQueue && newQueue.length > 0) {
       setQueue(newQueue);
       queueRef.current = newQueue;
@@ -430,7 +441,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       }
     }
     await loadAndPlayUrl(track);
-  }, [loadAndPlayUrl]);
+  }, [loadAndPlayUrl, unlockAudio]);
 
   const playRadioTrack = useCallback(async () => {
     const lastTrack = currentTrack;
@@ -462,6 +473,8 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   }, [currentTrack, loadAndPlayUrl]);
 
   const playNext = useCallback(() => {
+    unlockAudio(); // 🟢 Déblocage iOS instantané !
+    
     const q = queueRef.current;
     
     const handlePlaylistEnd = () => {
@@ -517,9 +530,11 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     if (nextTrack) {
       loadAndPlayUrl(nextTrack);
     }
-  }, [loadAndPlayUrl, playRadioTrack]);
+  }, [loadAndPlayUrl, playRadioTrack, unlockAudio]);
 
   const playPrev = useCallback(() => {
+    unlockAudio(); // 🟢 Déblocage iOS instantané !
+    
     const q = queueRef.current;
     if (currentTimeRef.current > 3) {
       setSeekRequest(0);
@@ -538,7 +553,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       const prevTrack = q[q.length - 1];
       loadAndPlayUrl(prevTrack);
     }
-  }, [loadAndPlayUrl]);
+  }, [loadAndPlayUrl, unlockAudio]);
 
   const toggleShuffle = useCallback(() => {
     isShuffleRef.current = !isShuffleRef.current;
@@ -553,6 +568,8 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const togglePlayPause = useCallback(() => {
+    unlockAudio(); // 🟢 Déblocage iOS instantané !
+    
     if (status === "playing") {
       setStatus("paused");
     } else {
@@ -562,7 +579,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
         setStatus("playing");
       }
     }
-  }, [status, playingUrl, currentTrack, loadAndPlayUrl]);
+  }, [status, playingUrl, currentTrack, loadAndPlayUrl, unlockAudio]);
   
   const seek = useCallback((time: number) => { 
     setSeekRequest(time); 
