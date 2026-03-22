@@ -11,18 +11,19 @@ export function Header() {
   const { user } = useAuth();
   
   return (
-    <header className="fixed top-0 left-0 w-full z-[500] flex items-center justify-between px-4 sm:px-8 py-4 bg-[#121212]/95 backdrop-blur-md border-b border-white/5">
+    // 🟢 CORRECTION : pt-[env(safe-area-inset-top)] permet de glisser sous l'encoche
+    <header className="fixed top-0 left-0 w-full z-[500] flex items-center justify-between px-4 sm:px-8 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] bg-[#121212]/95 backdrop-blur-md border-b border-white/5">
       
       <Link href="/" className="hover:opacity-80 transition-opacity">
         <h1 
-          className="text-3xl text-white tracking-widest" 
+          className="text-3xl text-white tracking-widest mt-1" 
           style={{ fontFamily: "'Dancing Script', 'Brush Script MT', cursive", fontWeight: 600 }}
         >
           HOUÉE
         </h1>
       </Link>
       
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-4 mt-1">
         {user ? (
           <Link href="/profile" className="flex items-center gap-3 rounded-full focus:outline-none group">
             <motion.span

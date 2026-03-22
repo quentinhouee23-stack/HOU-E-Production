@@ -36,18 +36,28 @@ export function Player() {
           fs: 0, 
           rel: 0, 
           modestbranding: 1,
-          playsinline: 1, 
-          enablejsapi: 1, 
+          playsinline: 1, // 🟢 INDISPENSABLE POUR IOS (Pas de plein écran forcé)
+          enablejsapi: 1,
           origin: typeof window !== "undefined" ? window.location.origin : "http://localhost:3000"
         },
         events: {
           onReady: (event) => {
+            // 🟢 HACK IOS : On s'assure que le lecteur est prêt à jouer avec le volume
             event.target.setVolume(volume * 100);
+            
+            // Si on a déjà une vidéo en attente quand le lecteur est prêt, on la charge
+            if (videoId) {
+              event.target.loadVideoById(videoId);
+            }
           },
           onStateChange: (event) => {
             if (event.data === window.YT.PlayerState.PLAYING) {
               const duration = event.target.getDuration();
               if (duration > 0) onDurationRef.current(duration);
+
+              // 🟢 SÉCURITÉ : On s'assure que la musique n'est pas muette quand elle démarre
+              event.target.unMute();
+              event.target.setVolume(volume * 100);
 
               progressInterval.current = setInterval(() => {
                 const currentTime = event.target.getCurrentTime();
@@ -62,8 +72,6 @@ export function Player() {
             }
           },
           onError: (event) => {
-            // 🟢 LE NETTOYAGE EST ICI : On a retiré le console.error.
-            // Si le son est bloqué par YouTube, l'app passe silencieusement au suivant !
             onEndedRef.current(); 
           }
         }
@@ -75,13 +83,14 @@ export function Player() {
       script.src = "https://www.youtube.com/iframe_api";
       document.body.appendChild(script);
       window.onYouTubeIframeAPIReady = initPlayer;
-    } else if (window.YT && window.YT.Player) {
+    } else if (window.YT && window.YT.Player && !ytPlayerInstance.current) {
       initPlayer();
     }
 
     return () => clearInterval(progressInterval.current);
   }, []);
 
+  // 🟢 On s'assure de bien charger la nouvelle vidéo quand l'ID change
   useEffect(() => {
     if (ytPlayerInstance.current && ytPlayerInstance.current.loadVideoById && videoId) {
       ytPlayerInstance.current.loadVideoById(videoId);
@@ -114,7 +123,9 @@ export function Player() {
   if (!isClient) return null;
 
   return (
-    <div style={{ position: 'fixed', top: -1000, left: -1000, width: 10, height: 10, opacity: 0.01, pointerEvents: 'none' }}>
+    // 🟢 SÉCURITÉ IOS : On ne cache plus complètement l'IFrame hors écran, on la rend juste invisible.
+    // Parfois Safari bloque les éléments situés à -1000px
+    <div style={{ position: 'fixed', top: 0, left: 0, width: 1, height: 1, opacity: 0.01, pointerEvents: 'none', zIndex: -1 }}>
       <div ref={playerContainerRef}></div>
     </div>
   );
