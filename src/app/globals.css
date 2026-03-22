@@ -6,8 +6,9 @@
   --glass-bg: rgba(255, 255, 255, 0.06);
   --glass-border: rgba(255, 255, 255, 0.12);
   --glass-highlight: rgba(255, 255, 255, 0.08);
-  --primary: #7c3aed;
-  --primary-foreground: #fff;
+  /* 🟢 CORRECTION : Le fameux vert HOUÉE ! */
+  --primary: #1db954;
+  --primary-foreground: #000;
 }
 
 @theme inline {
@@ -19,14 +20,84 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/* ============================================
+   BASE MOBILE
+   ============================================ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  /* Évite les délais de 300ms sur les taps iOS/Android */
+  -webkit-tap-highlight-color: transparent;
+}
+
+html {
+  /* Empêche iOS de grossir le texte en paysage */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  /* Scroll fluide natif */
+  scroll-behavior: smooth;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans), system-ui, sans-serif;
   min-height: 100dvh;
+  /* Évite le rebond élastique de page sur iOS */
+  overscroll-behavior: none;
+  /* Rendu de texte plus net sur mobile */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* 🟢 AJOUT : Évite de scroller horizontalement accidentellement */
+  overflow-x: hidden;
 }
 
-/* Liquid Glass : glassmorphism avec reflets */
+/* Empêche la sélection de texte accidentelle lors des swipes */
+button,
+[role="button"] {
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: pointer;
+}
+
+/* Supprime les styles natifs des inputs sur iOS (coins arrondis, etc.) */
+input,
+textarea,
+select {
+  -webkit-appearance: none;
+  appearance: none;
+  border-radius: 0;
+  /* 🟢 AJOUT CRUCIAL : Empêche l'iPhone de zoomer automatiquement sur la recherche */
+  font-size: 16px;
+}
+
+/* Évite que les images dépassent leur conteneur */
+img {
+  max-width: 100%;
+  height: auto;
+  /* Évite le drag d'images sur mobile */
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+/* 🟢 OPTIMISATION : Scrollbars personnalisées discrètes (mieux que 100% invisibles pour l'UX des playlists) */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+}
+
+/* ============================================
+   LIQUID GLASS
+   ============================================ */
+
 .liquid-glass-nav {
   padding-bottom: env(safe-area-inset-bottom, 0);
 }
@@ -48,11 +119,19 @@ body {
     0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
+/* ============================================
+   SAFE AREAS (encoche, barre home iOS/Android)
+   ============================================ */
+
 .safe-area-pb {
   padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
 }
 
-/* Safe area pour le contenu au-dessus du player + nav */
+.safe-area-pt {
+  padding-top: max(0.5rem, env(safe-area-inset-top));
+}
+
 .main-content-padding {
-  padding-bottom: calc(8rem + env(safe-area-inset-bottom, 0px));
+  /* 🟢 J'ai passé à 10rem pour être certain que le dernier son de tes playlists ne soit pas caché sous ton lecteur et ta nav */
+  padding-bottom: calc(10rem + env(safe-area-inset-bottom, 0px));
 }

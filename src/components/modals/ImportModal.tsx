@@ -1,270 +1,284 @@
 // @ts-nocheck
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import React, { useEffect, useState, useRef } from "react";
 import { usePlaylists } from "@/context/PlaylistContext";
-import { X, Download, AlertCircle, CheckCircle2, Search, Loader2 } from "lucide-react";
+import { useMusic } from "@/context/MusicContext";
+import { useAuth } from "@/context/AuthContext";
+import { motion, AnimatePresence } from "framer-motion";
 
 export function ImportModal() {
-  const { createPlaylist } = usePlaylists();
+  const { playlists, updatePlaylist } = usePlaylists();
+  const { status } = useMusic();
+  const { user } = useAuth();
   
-  const [isOpen, setIsOpen] = useState(false);
-  const [url, setUrl] = useState("");
-  const [status, setStatus] = useState<"idle" | "scraping" | "searching" | "saving" | "success" | "error">("idle");
-  const [errorMessage, setErrorMessage] = useState("");
+  const [detectedTrack, setDetectedTrack] = useState(null);
+  const [showModal, setShowModal] = useState(false);
+  const [step, setStep] = useState("loading"); 
+  const [errorType, setErrorType] = useState(""); 
+  const [manualInput, setManualInput] = useState("");
   
-  const [progress, setProgress] = useState(0);
-  const [currentTrackName, setCurrentTrackName] = useState("");
-  const [stats, setStats] = useState({ total: 0, found: 0 });
+  const [showDetectBtn, setShowDetectBtn] = useState(false);
+  
+  const lastLinkRef = useRef("");
 
-  useEffect(() => {
-    const handleOpen = () => {
-      setIsOpen(true);
-      setStatus("idle");
-      setUrl("");
-      setProgress(0);
-    };
-    window.addEventListener("openImportModal", handleOpen);
-    return () => window.removeEventListener("openImportModal", handleOpen);
-  }, []);
+  // 🟢 Détecte si le mini-player est affiché (ajuste selon comment est construit ton status)
+  // Si status contient des infos sur la musique, hasMiniPlayer sera true.
+  const hasMiniPlayer = status && Object.keys(status).length > 0 && status !== "idle";
 
-  const handleClose = () => {
-    if (status === "scraping" || status === "searching" || status === "saving") {
-      const confirmClose = window.confirm("L'importation est en cours. Veux-tu vraiment annuler ?");
-      if (!confirmClose) return;
+  const processLink = async (textToProcess = null) => {
+    try {
+      let text = textToProcess;
+      
+      if (!text) {
+         text = await navigator.clipboard.readText();
+      }
+      
+      if (!text || (!text.includes("tiktok") && !text.includes("youtu"))) {
+        return;
+      }
+
+      setShowDetectBtn(false); 
+      setShowModal(true);
+      setStep("loading");
+      lastLinkRef.current = text;
+
+      const res = await fetch(`/api/import?url=${encodeURIComponent(text)}`);
+      const data = await res.json();
+      
+      if (res.ok && data.track) {
+        setDetectedTrack(data.track);
+        setStep("confirm");
+      } else {
+        setErrorType(data.error || "protected_link");
+        setStep("error");
+      }
+    } catch (err) {
+      setStep("error");
+      setErrorType("server_error");
     }
-    setIsOpen(false);
   };
 
-  const startImport = async () => {
-    if (!url.includes("spotify.com")) {
-      setStatus("error");
-      setErrorMessage("Veuillez entrer un lien de playlist Spotify valide.");
-      return;
-    }
-
-    setStatus("scraping");
-    setErrorMessage("");
-    setProgress(0);
-
-    try {
-      const scrapeRes = await fetch(`/api/import-spotify?url=${encodeURIComponent(url)}`);
-      const scrapeData = await scrapeRes.json();
-
-      if (!scrapeRes.ok) {
-        throw new Error(scrapeData.error || "Erreur lors de la lecture de la playlist.");
-      }
-
-      const spotifyTracks = scrapeData.tracks;
-      const playlistName = scrapeData.name;
-      
-      if (!spotifyTracks || spotifyTracks.length === 0) {
-        throw new Error("La playlist semble vide ou illisible.");
-      }
-
-      setStats({ total: spotifyTracks.length, found: 0 });
-      setStatus("searching");
-
-      const matchedTracks = [];
-      
-      for (let i = 0; i < spotifyTracks.length; i++) {
-        const track = spotifyTracks[i];
-        setCurrentTrackName(`${track.title} - ${track.artist}`);
+  useEffect(() => {
+    const checkClipboardSilently = async () => {
+      try {
+        const permission = await navigator.permissions.query({ name: 'clipboard-read' as any });
         
-        const cleanTitle = track.title.replace(/\([^)]*\)/g, '').replace(/\[[^\]]*\]/g, '').trim();
-        const searchQuery = `${cleanTitle} ${track.artist}`;
-        
-        try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 4000);
-
-          const searchRes = await fetch(`/api/search?q=${encodeURIComponent(searchQuery)}`, {
-            signal: controller.signal
-          });
-          
-          clearTimeout(timeoutId);
-          
-          if (searchRes.ok) {
-            const searchData = await searchRes.json();
-            if (searchData.tracks && searchData.tracks.length > 0) {
-              matchedTracks.push(searchData.tracks[0]); 
-              setStats(prev => ({ ...prev, found: prev.found + 1 }));
-            }
-          }
-        } catch (err) {
-          console.warn("Son ignoré (timeout ou introuvable) :", searchQuery);
+        if (permission.state === 'granted' || permission.state === 'prompt') {
+            setShowDetectBtn(true);
         }
-
-        setProgress(Math.round(((i + 1) / spotifyTracks.length) * 100));
+      } catch (err) {
+         console.log("Erreur silencieuse presse-papier", err);
+         setShowDetectBtn(true);
       }
+    };
 
-      // ÉTAPE DE SAUVEGARDE
-      setStatus("saving");
-      setCurrentTrackName("Finalisation de la playlist...");
-      
-      // Petit délai visuel sympa pour l'utilisateur
-      await new Promise(resolve => setTimeout(resolve, 800));
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        setTimeout(checkClipboardSilently, 500);
+      }
+    };
 
-      if (matchedTracks.length > 0) {
-        const cleanTracksToSave = matchedTracks.map((t: any) => ({
-          id: t.id ? t.id.toString() : Date.now().toString() + Math.random().toString(),
-          title: t.title || "Inconnu",
-          artist: t.artist || "Inconnu",
-          image: t.image || "",
-          duration: t.duration || "0:00",
-          preview: t.preview || ""
-        }));
+    window.addEventListener("focus", checkClipboardSilently);
+    document.addEventListener("visibilitychange", handleVisibility);
+    
+    checkClipboardSilently();
 
-        // 🟢 LA MAGIE EST ICI : Le Fire & Forget !
-        // On NE MET PLUS de "await" devant createPlaylist.
-        // L'app lance la sauvegarde en arrière-plan sans attendre la réponse de la base de données.
-        createPlaylist(`🎵 ${playlistName}`, cleanTracksToSave).catch(e => {
-          console.error("Erreur silencieuse de sauvegarde en arrière-plan :", e);
-        });
+    return () => {
+      window.removeEventListener("focus", checkClipboardSilently);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, []);
 
-        // Et on affiche le succès instantanément à l'utilisateur !
-        setStatus("success");
+  const handleAddToPlaylist = (playlistId) => {
+    const playlist = playlists.find(p => p.id === playlistId);
+    if (playlist && detectedTrack) {
+      const exists = playlist.tracks?.find(t => t.id === detectedTrack.id);
+      if (!exists) {
+        updatePlaylist(playlistId, { tracks: [...(playlist.tracks || []), detectedTrack] });
+      }
+      closeModal();
+    }
+  };
+
+  const closeModal = () => {
+    setShowModal(false);
+    setTimeout(() => {
+      setStep("loading");
+      setDetectedTrack(null);
+      setErrorType("");
+      setShowDetectBtn(false); 
+    }, 300);
+  };
+
+  const handleManualSearch = async () => {
+    if (!manualInput) return;
+    setStep("loading");
+    try {
+      const res = await fetch(`/api/search?q=${encodeURIComponent(manualInput)}`);
+      const data = await res.json();
+      if (data.tracks && data.tracks.length > 0) {
+        setDetectedTrack(data.tracks[0]);
+        setStep("confirm");
       } else {
-        throw new Error("Aucun titre de cette playlist n'a pu être converti.");
+        setErrorType("not_found");
+        setStep("error");
       }
-
-    } catch (error: any) {
-      setStatus("error");
-      setErrorMessage(error.message || "Une erreur inattendue est survenue.");
+    } catch (e) {
+      setErrorType("server_error");
+      setStep("error");
     }
   };
 
   return (
-    <AnimatePresence>
-      {isOpen && (
-        <div 
-          className="fixed inset-0 z-[100000] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 sm:p-6"
-          onClick={handleClose}
-        >
-          <motion.div 
-            initial={{ opacity: 0, scale: 0.95, y: 20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 20 }}
-            transition={{ type: "spring", damping: 25, stiffness: 300 }}
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md bg-[#181818] border border-white/10 rounded-[32px] overflow-hidden shadow-2xl flex flex-col"
+    <>
+      {/* 🟢 LE NOUVEAU BOUTON MAGIQUE (Swipeable & Dynamique) */}
+      <AnimatePresence>
+        {!showModal && showDetectBtn && (
+          <motion.div
+            initial={{ opacity: 0, y: 50 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 50, scale: 0.9 }}
+            transition={{ type: "spring", stiffness: 300, damping: 25 }}
+            // On ajuste la hauteur : bottom-36 si mini-player, bottom-24 s'il n'y est pas
+            // pointer-events-none garantit qu'on peut cliquer à travers le conteneur transparent
+            className={`fixed left-0 right-0 z-[9000] flex justify-center px-4 pointer-events-none transition-all duration-300 ${hasMiniPlayer ? 'bottom-[140px]' : 'bottom-[90px]'}`}
           >
-            <div className="flex items-center justify-between p-6 pb-4 border-b border-white/5">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-[#1db954]/20 text-[#1db954] flex items-center justify-center">
-                  <Download className="w-5 h-5" />
-                </div>
-                <h2 className="text-xl font-black text-white">Import Spotify</h2>
-              </div>
-              <button 
-                onClick={handleClose}
-                className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-white/50 hover:text-white transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+            <motion.button
+              drag="y"
+              dragConstraints={{ top: 0, bottom: 0 }}
+              dragElastic={0.4}
+              onDragEnd={(e, info) => {
+                // Si l'utilisateur glisse vers le bas de plus de 30px, on ferme le bouton
+                if (info.offset.y > 30) {
+                  setShowDetectBtn(false);
+                }
+              }}
+              onClick={() => processLink()}
+              // pointer-events-auto rend UNIQUEMENT ce petit bouton cliquable
+              className="pointer-events-auto bg-[#1db954] text-black font-bold px-5 py-2.5 rounded-full shadow-[0_10px_25px_rgba(29,185,84,0.3)] flex items-center gap-2 hover:scale-105 active:scale-95 transition-transform"
+            >
+              <span className="text-lg">📋</span>
+              <span className="text-sm">Lien détecté</span>
+              <span className="text-black/50 text-xs ml-1 border-l border-black/20 pl-2 hidden sm:inline-block">Swipe ↓ pour ignorer</span>
+            </motion.button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-            <div className="p-6 flex flex-col gap-6">
+      {/* 🟢 LE RESTE DE LA MODALE (Inchangé) */}
+      <AnimatePresence>
+        {showModal && (
+          <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 sm:p-6 bg-black/90 backdrop-blur-xl">
+            <motion.div 
+              initial={{ y: 50, opacity: 0, scale: 0.9 }} 
+              animate={{ y: 0, opacity: 1, scale: 1 }} 
+              exit={{ y: 50, opacity: 0, scale: 0.9 }}
+              className="bg-[#1c1c1e] w-full max-w-md rounded-[32px] overflow-hidden border border-white/10 shadow-2xl"
+            >
               
-              {status === "idle" || status === "error" ? (
-                <>
-                  <p className="text-sm text-white/70">
-                    Colle le lien d'une playlist Spotify publique. Nous allons l'analyser et la recréer instantanément dans ta bibliothèque.
-                  </p>
-
-                  <div className="flex flex-col gap-2">
-                    <input 
-                      type="url" 
-                      placeholder="https://open.spotify.com/playlist/..." 
-                      value={url}
-                      onChange={(e) => setUrl(e.target.value)}
-                      autoFocus
-                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-4 text-sm text-white outline-none focus:border-[#1db954] transition-colors"
-                      onKeyDown={(e) => e.key === 'Enter' && url.length > 10 && startImport()}
-                    />
-                    {status === "error" && (
-                      <div className="flex items-center gap-2 text-red-400 text-xs mt-1 bg-red-500/10 p-3 rounded-lg border border-red-500/20">
-                        <AlertCircle className="w-4 h-4 shrink-0" />
-                        <p>{errorMessage}</p>
-                      </div>
-                    )}
-                  </div>
-
-                  <button 
-                    onClick={startImport}
-                    disabled={!url.includes("spotify.com")}
-                    className="w-full bg-[#1db954] text-black font-black py-4 rounded-xl hover:scale-[1.02] transition-transform disabled:opacity-50 disabled:hover:scale-100 shadow-[0_0_20px_rgba(29,185,84,0.3)] mt-2"
-                  >
-                    Lancer l'importation
-                  </button>
-                </>
-              ) : status === "success" ? (
-                <div className="flex flex-col items-center justify-center py-6 text-center">
-                  <motion.div 
-                    initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", damping: 12 }}
-                    className="w-20 h-20 bg-[#1db954]/20 rounded-full flex items-center justify-center text-[#1db954] mb-6"
-                  >
-                    <CheckCircle2 className="w-10 h-10" />
-                  </motion.div>
-                  <h3 className="text-2xl font-black text-white mb-2">Import terminé !</h3>
-                  <p className="text-white/60 mb-6">
-                    {stats.found} titres sur {stats.total} ont été trouvés et ajoutés à ta nouvelle playlist.
-                  </p>
-                  <button 
-                    onClick={() => {
-                      handleClose();
-                      window.dispatchEvent(new Event("resetPlaylistsView")); 
-                    }}
-                    className="w-full bg-white/10 hover:bg-white/20 text-white font-bold py-4 rounded-xl transition-colors"
-                  >
-                    Voir ma bibliothèque
-                  </button>
-                </div>
-              ) : (
-                <div className="flex flex-col py-4">
-                  <div className="flex justify-between text-sm font-bold text-white mb-2">
-                    <span>
-                      {status === "scraping" ? "Lecture de Spotify..." : 
-                       status === "saving" ? "Création de la playlist..." : 
-                       "Conversion des titres..."}
-                    </span>
-                    <span className="text-[#1db954]">{progress}%</span>
-                  </div>
-                  
-                  <div className="w-full h-3 bg-white/10 rounded-full overflow-hidden mb-6 relative">
-                    <motion.div 
-                      className="absolute top-0 left-0 h-full bg-[#1db954]"
-                      initial={{ width: 0 }}
-                      animate={{ width: `${progress}%` }}
-                      transition={{ ease: "linear" }}
-                    />
-                  </div>
-
-                  {(status === "searching" || status === "saving") && (
-                    <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex items-center gap-4">
-                      <div className="relative w-8 h-8 flex items-center justify-center shrink-0">
-                        <div className="absolute inset-0 border-2 border-white/10 border-t-[#1db954] rounded-full animate-spin" />
-                        {status === "saving" ? <Loader2 className="w-4 h-4 text-[#1db954] animate-spin" /> : <Search className="w-3 h-3 text-[#1db954]" />}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-[10px] text-white/50 uppercase font-bold tracking-wider mb-1">
-                          {status === "saving" ? "Finalisation" : "Recherche en cours"}
-                        </p>
-                        <p className="text-sm text-white font-bold truncate">{currentTrackName || "..."}</p>
-                      </div>
-                    </div>
-                  )}
-
-                  <p className="text-xs text-center text-white/40 mt-6">
-                    Cette opération peut prendre une minute. Ne ferme pas cette fenêtre.
-                  </p>
+              {step === "loading" && (
+                <div className="p-10 text-center flex flex-col items-center justify-center">
+                  <div className="w-16 h-16 border-4 border-[#1db954]/30 border-t-[#1db954] rounded-full animate-spin mb-6"></div>
+                  <h2 className="text-2xl font-black text-white mb-2">Analyse du lien...</h2>
                 </div>
               )}
-            </div>
-          </motion.div>
-        </div>
-      )}
-    </AnimatePresence>
+
+              {step === "confirm" && detectedTrack && (
+                <div className="p-8 text-center">
+                  <div className="w-20 h-20 bg-gradient-to-tr from-[#1db954] to-[#1ed760] rounded-3xl flex items-center justify-center mx-auto mb-6 rotate-12 shadow-[0_0_30px_rgba(29,185,84,0.3)]">
+                    <span className="text-4xl -rotate-12">🎵</span>
+                  </div>
+                  <h2 className="text-2xl font-black mb-2 text-white">Son trouvé !</h2>
+                  
+                  <div className="bg-white/5 p-4 rounded-2xl flex items-center gap-4 mb-8 text-left border border-white/10 mt-6">
+                    <div className="w-16 h-16 rounded-lg overflow-hidden shrink-0 shadow-lg">
+                      <img src={detectedTrack.image} className="w-full h-full object-cover" />
+                    </div>
+                    <div className="overflow-hidden flex-1">
+                      <p className="font-bold text-white truncate">{detectedTrack.title}</p>
+                      <p className="text-sm text-[#1db954] font-medium truncate">{detectedTrack.artist}</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3">
+                    <button onClick={() => setStep("playlist")} className="bg-white text-black font-black py-4 rounded-2xl hover:scale-[1.02] active:scale-95 transition-all">
+                      Ajouter à une playlist
+                    </button>
+                    <button onClick={closeModal} className="text-white/30 font-bold py-3 hover:text-white transition-colors">
+                      Annuler
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {step === "playlist" && (
+                <div className="p-8 flex flex-col max-h-[85vh]">
+                   <div className="flex justify-between items-center mb-6">
+                     <h2 className="text-2xl font-black text-white">Tes Playlists</h2>
+                     <button onClick={() => setStep("confirm")} className="text-white/40 text-sm">Retour</button>
+                   </div>
+                   
+                   <div className="space-y-3 overflow-y-auto pr-1 custom-scrollbar">
+                      {playlists.map(p => (
+                        <button key={p.id} onClick={() => handleAddToPlaylist(p.id)} className="w-full flex items-center gap-4 p-3 rounded-2xl bg-white/5 hover:bg-[#1db954]/20 border border-white/5 transition-all text-left">
+                          <div className="w-12 h-12 bg-black rounded-lg flex items-center justify-center overflow-hidden shrink-0">
+                            {p.tracks?.[0]?.image ? <img src={p.tracks[0].image} className="w-full h-full object-cover" /> : "🎧"}
+                          </div>
+                          <span className="font-bold text-white truncate">{p.name}</span>
+                        </button>
+                      ))}
+                   </div>
+                </div>
+              )}
+
+              {step === "error" && (
+                <div className="p-8 text-center">
+                  <div className="w-20 h-20 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
+                    <span className="text-4xl">⚠️</span>
+                  </div>
+                  
+                  {errorType === "original_sound" ? (
+                    <>
+                      <h2 className="text-2xl font-black mb-2 text-white">Son Original</h2>
+                      <p className="text-white/50 text-sm mb-6">
+                        L'utilisateur a modifié ou créé ce son lui-même. TikTok ne fournit pas son vrai nom. Si tu le connais, tape-le ici :
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <h2 className="text-2xl font-black mb-2 text-white">Introuvable</h2>
+                      <p className="text-white/50 text-sm mb-6">
+                        Impossible d'extraire le son de ce lien. Tapez le nom de l'artiste ou du son ci-dessous :
+                      </p>
+                    </>
+                  )}
+                  
+                  <div className="flex gap-2 mb-6">
+                    <input 
+                      type="text" 
+                      value={manualInput}
+                      onChange={(e) => setManualInput(e.target.value)}
+                      placeholder="Ex: Titre ou Artiste..."
+                      className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-[#1db954] text-white"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3">
+                    <button onClick={handleManualSearch} disabled={!manualInput} className="bg-[#1db954] text-black font-black py-4 rounded-2xl disabled:opacity-50">
+                      Chercher manuellement
+                    </button>
+                    <button onClick={closeModal} className="text-white/30 font-bold py-3 hover:text-white transition-colors">
+                      Fermer
+                    </button>
+                  </div>
+                </div>
+              )}
+
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </>
   );
 }

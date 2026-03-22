@@ -4,7 +4,6 @@
 import React, { useState, useEffect } from "react";
 import { Header } from "@/components/ui/Header";
 import { useAuth } from "@/context/AuthContext";
-import { useNotifications } from "@/context/NotificationContext";
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -12,7 +11,6 @@ import { Edit2, Check, X, Clock, TrendingUp, LogOut, Users, UserPlus, Search as 
 
 export default function ProfilePage() {
   const { user, signOut } = useAuth();
-  const { sendNotification } = useNotifications();
   const router = useRouter();
   
   const [username, setUsername] = useState("Utilisateur");
@@ -34,6 +32,23 @@ export default function ProfilePage() {
   const [myFriends, setMyFriends] = useState([]);
   const [pendingRequests, setPendingRequests] = useState([]);
   const [sentRequests, setSentRequests] = useState([]);
+
+  const toggleNav = (show: boolean) => {
+    if (show) {
+      window.dispatchEvent(new Event("showNav"));
+    } else {
+      window.dispatchEvent(new Event("hideNav"));
+    }
+  };
+
+  useEffect(() => {
+    if (showFriends) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => { document.body.style.overflow = ''; };
+  }, [showFriends]);
 
   const loadLocalStats = () => {
     const emptyDaily = [
@@ -65,7 +80,6 @@ export default function ProfilePage() {
       const currentName = user.user_metadata?.username || "Utilisateur";
       setUsername(currentName);
 
-      // On s'assure que le profil existe bien
       await supabase.from('profiles').upsert({
         id: user.id,
         username: currentName
@@ -142,14 +156,12 @@ export default function ProfilePage() {
 
   const sendFriendRequest = async (targetId) => {
     await supabase.from('friends').insert({ user_id_1: user.id, user_id_2: targetId, status: 'pending' });
-    sendNotification(targetId, 'friend_request', 'Nouvelle demande', `${user.user_metadata?.username || "Quelqu'un"} souhaite t'ajouter en ami !`);
     setFriendSearch(""); 
     fetchFriends();
   };
 
-  const acceptFriendRequest = async (relId, senderId) => {
+  const acceptFriendRequest = async (relId) => {
     await supabase.from('friends').update({ status: 'accepted' }).eq('id', relId);
-    sendNotification(senderId, 'friend_request', 'Demande acceptée', `${user.user_metadata?.username || "Quelqu'un"} a accepté ta demande d'ami !`);
     fetchFriends();
   };
 
@@ -186,10 +198,10 @@ export default function ProfilePage() {
   const todayArrayIndex = (new Date().getDay() + 6) % 7;
 
   return (
-    <div className="pb-32 min-h-screen text-white flex flex-col relative overflow-hidden">
+    <div className="pb-32 min-h-screen text-white flex flex-col relative overflow-x-hidden bg-[#121212]">
       <Header />
 
-      <div className="px-4 py-8 max-w-5xl mx-auto space-y-12 w-full flex-1 relative">
+      <div className="px-4 pt-32 pb-8 max-w-5xl mx-auto space-y-12 w-full flex-1 relative">
         
         <section className="flex flex-col items-center text-center space-y-4 pt-4">
           
@@ -219,7 +231,7 @@ export default function ProfilePage() {
           
           <div className="flex gap-3 pt-2">
             <button 
-              onClick={() => { setShowFriends(true); fetchFriends(); }} 
+              onClick={() => { setShowFriends(true); fetchFriends(); toggleNav(false); }} 
               className="bg-white/10 hover:bg-white/20 transition-colors px-6 py-2 rounded-full font-bold flex items-center gap-2 relative"
             >
               <Users className="w-4 h-4" /> Amis
@@ -320,19 +332,23 @@ export default function ProfilePage() {
 
       <AnimatePresence>
         {showFriends && (
-          <div className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center bg-black/80 backdrop-blur-md p-0 sm:p-6">
+          <div 
+            className="fixed inset-0 z-[9999] flex flex-col justify-end sm:items-center sm:justify-center bg-black/80 backdrop-blur-md overflow-hidden h-[100dvh]"
+            onClick={() => { setShowFriends(false); toggleNav(true); }}
+          >
             <motion.div 
               initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} transition={{ type: "spring", damping: 25, stiffness: 300 }}
-              className="w-full sm:max-w-md bg-[#1c1c1e] rounded-t-[32px] sm:rounded-[32px] h-[85vh] sm:h-[600px] flex flex-col border-t sm:border border-white/10 overflow-hidden shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+              className="w-full sm:max-w-md bg-[#1c1c1e] rounded-t-[32px] sm:rounded-[32px] flex flex-col border-t sm:border border-white/10 shadow-2xl h-[85dvh] sm:h-[700px]"
             >
-              <div className="flex items-center justify-between p-6 border-b border-white/5">
+              <div className="flex items-center justify-between p-6 border-b border-white/5 shrink-0">
                 <h2 className="text-2xl font-black text-white">Social</h2>
-                <button onClick={() => setShowFriends(false)} className="w-10 h-10 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center transition-colors">
+                <button onClick={() => { setShowFriends(false); toggleNav(true); }} className="w-10 h-10 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center transition-colors">
                   <X className="w-5 h-5 text-white" />
                 </button>
               </div>
 
-              <div className="flex border-b border-white/5">
+              <div className="flex border-b border-white/5 shrink-0">
                 <button 
                   onClick={() => setActiveTab("friends")} 
                   className={`flex-1 py-4 text-sm font-bold transition-colors ${activeTab === 'friends' ? 'text-[#1db954] border-b-2 border-[#1db954]' : 'text-white/50 hover:text-white'}`}
@@ -347,7 +363,7 @@ export default function ProfilePage() {
                 </button>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+              <div className="flex-1 overflow-y-auto p-4 pb-12 custom-scrollbar overscroll-contain">
                 
                 {activeTab === "search" && (
                   <div className="space-y-4">
@@ -377,7 +393,7 @@ export default function ProfilePage() {
                             ) : hasSent ? (
                               <span className="text-xs text-[#1db954] bg-[#1db954]/10 px-3 py-1.5 rounded-full font-bold">Envoyé</span>
                             ) : hasPending ? (
-                              <button onClick={() => acceptFriendRequest(pendingRequests.find(p => p.id === result.id).relId, result.id)} className="bg-[#1db954] text-black text-xs font-bold px-4 py-2 rounded-full">Accepter</button>
+                              <button onClick={() => acceptFriendRequest(pendingRequests.find(p => p.id === result.id).relId)} className="bg-[#1db954] text-black text-xs font-bold px-4 py-2 rounded-full">Accepter</button>
                             ) : (
                               <button onClick={() => sendFriendRequest(result.id)} className="bg-white/10 hover:bg-white/20 transition-colors text-white text-xs font-bold px-4 py-2 rounded-full flex items-center gap-1">
                                 <UserPlus className="w-4 h-4" /> Ajouter
@@ -405,7 +421,7 @@ export default function ProfilePage() {
                                  {req.username.charAt(0)}
                               </div>
                               <span className="flex-1 font-bold text-white truncate">{req.username}</span>
-                              <button onClick={() => acceptFriendRequest(req.relId, req.id)} className="bg-[#1db954] text-black w-8 h-8 flex items-center justify-center rounded-full hover:scale-105 transition-transform">
+                              <button onClick={() => acceptFriendRequest(req.relId)} className="bg-[#1db954] text-black w-8 h-8 flex items-center justify-center rounded-full hover:scale-105 transition-transform">
                                 <Check className="w-4 h-4" />
                               </button>
                               <button onClick={() => removeFriend(req.relId)} className="bg-red-500/20 text-red-500 w-8 h-8 flex items-center justify-center rounded-full hover:bg-red-500/40 transition-colors">

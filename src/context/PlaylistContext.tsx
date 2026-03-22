@@ -10,12 +10,30 @@ const PlaylistContext = createContext<any>(null);
 
 export function PlaylistProvider({ children }: { children: React.ReactNode }) {
   const [playlists, setPlaylists] = useState([]);
-  const { user } = useAuth();
+  
+  const [isLoaded, setIsLoaded] = useState(false);
+  const { user, loading } = useAuth(); 
+
+  const preloadImages = (playlistsData) => {
+    if (!playlistsData || playlistsData.length === 0) return;
+    
+    playlistsData.forEach(p => {
+      if (p.tracks && p.tracks.length > 0 && p.tracks[0].image) {
+        const img = new Image();
+        img.src = p.tracks[0].image;
+      }
+    });
+  };
 
   const fetchPlaylists = async () => {
     if (!user) {
       const saved = localStorage.getItem("my_glass_playlists");
-      if (saved) setPlaylists(JSON.parse(saved));
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        setPlaylists(parsed);
+        preloadImages(parsed);
+      }
+      setIsLoaded(true); 
       return;
     }
 
@@ -35,17 +53,27 @@ export function PlaylistProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
+    // 🟢 DÉTECTEUR DE BLOCAGE POUR TES ANCIENNES PLAYLISTS
     const { data, error } = await supabase
       .from("playlists")
       .select("*, playlist_collaborators(user_id)")
       .order('created_at', { ascending: false });
 
-    if (!error && data) {
+    if (error) {
+      console.error("🚨 SUPABASE REFUSE DE LIRE TES PLAYLISTS :", error.message, error.details, error.hint);
+      alert(`Erreur de lecture de tes playlists : ${error.message}`);
+    } else if (data) {
       setPlaylists(data);
+      preloadImages(data); 
     }
+    
+    setIsLoaded(true);
   };
 
   useEffect(() => {
+    if (loading) return;
+
+    setIsLoaded(false);
     fetchPlaylists();
 
     if (user) {
@@ -58,16 +86,13 @@ export function PlaylistProvider({ children }: { children: React.ReactNode }) {
 
       return () => { supabase.removeChannel(subscription); };
     }
-  }, [user]);
+  }, [user, loading]);
 
-  // 🟢 LA SOLUTION ULTIME : L'Interface Optimiste
   const createPlaylist = async (name: string, tracks: Track[] = []) => {
     const safeTracks = Array.isArray(tracks) ? tracks : [];
     
-    // 1. CRÉATION IMMÉDIATE DANS L'INTERFACE
-    // On n'attend plus le serveur. On crée une fausse playlist pour l'afficher tout de suite.
     const tempPlaylist = {
-      id: `temp-${Date.now()}`, // Faux ID temporaire
+      id: `temp-${Date.now()}`, 
       name,
       owner_id: user?.id || "local",
       tracks: safeTracks,
@@ -75,17 +100,15 @@ export function PlaylistProvider({ children }: { children: React.ReactNode }) {
       created_at: new Date().toISOString()
     };
 
-    // BOUM 💥 Elle apparaît à l'écran instantanément !
+    // Interface optimiste : on l'affiche tout de suite
     setPlaylists(prev => [tempPlaylist, ...prev]);
 
-    // Mode hors-ligne / Visiteur
     if (!user) {
       const saved = JSON.parse(localStorage.getItem("my_glass_playlists") || "[]");
       localStorage.setItem("my_glass_playlists", JSON.stringify([tempPlaylist, ...saved]));
       return tempPlaylist;
     }
 
-    // 2. ENVOI SILENCIEUX À SUPABASE (En arrière-plan)
     try {
       const { data, error } = await supabase.from("playlists").insert({
         name,
@@ -94,14 +117,16 @@ export function PlaylistProvider({ children }: { children: React.ReactNode }) {
         is_shared: false
       }).select().single();
 
+      // 🟢 DÉTECTEUR DE BLOCAGE POUR LA CRÉATION
       if (error) {
-        console.error("❌ Supabase a refusé la sauvegarde :", error);
-        return; // L'utilisateur garde la playlist localement sur son écran pour la session
+        console.error("🚨 SUPABASE REFUSE DE SAUVEGARDER :", error.message, error.details);
+        alert(`Supabase a bloqué ta playlist !\nRaison : ${error.message}\nDétails : ${error.details}`);
+        
+        // On annule l'interface optimiste : la playlist disparaît direct sous tes yeux
+        setPlaylists(prev => prev.filter(p => p.id !== tempPlaylist.id));
+        return; 
       }
 
-      // 3. REMPLACEMENT INVISIBLE
-      // Quand Supabase répond enfin avec le "vrai" ID de la base de données, 
-      // on remplace le faux ID temporaire en silence.
       if (data) {
         setPlaylists(prev => prev.map(p => p.id === tempPlaylist.id ? data : p));
       }
@@ -167,7 +192,8 @@ export function PlaylistProvider({ children }: { children: React.ReactNode }) {
       deletePlaylist, 
       addTrackToPlaylist, 
       removeTrackFromPlaylist,
-      shareWithFriend 
+      shareWithFriend,
+      isLoaded 
     }}>
       {children}
     </PlaylistContext.Provider>

@@ -27,10 +27,17 @@ export function Player() {
 
     const initPlayer = () => {
       ytPlayerInstance.current = new window.YT.Player(playerContainerRef.current, {
-        width: "0",
-        height: "0",
+        width: "10", 
+        height: "10",
         playerVars: {
-          autoplay: 1, controls: 0, disablekb: 1, fs: 0, rel: 0, modestbranding: 1,
+          autoplay: 1, 
+          controls: 0, 
+          disablekb: 1, 
+          fs: 0, 
+          rel: 0, 
+          modestbranding: 1,
+          playsinline: 1, 
+          enablejsapi: 1, 
           origin: typeof window !== "undefined" ? window.location.origin : "http://localhost:3000"
         },
         events: {
@@ -44,7 +51,7 @@ export function Player() {
 
               progressInterval.current = setInterval(() => {
                 const currentTime = event.target.getCurrentTime();
-                onProgressRef.current({ playedSeconds: currentTime }); // Le Context gère ça silencieusement maintenant !
+                onProgressRef.current({ playedSeconds: currentTime }); 
               }, 1000);
             } else {
               clearInterval(progressInterval.current);
@@ -55,7 +62,8 @@ export function Player() {
             }
           },
           onError: (event) => {
-            console.error("Erreur de lecture YouTube :", event.data);
+            // 🟢 LE NETTOYAGE EST ICI : On a retiré le console.error.
+            // Si le son est bloqué par YouTube, l'app passe silencieusement au suivant !
             onEndedRef.current(); 
           }
         }
@@ -106,7 +114,7 @@ export function Player() {
   if (!isClient) return null;
 
   return (
-    <div style={{ position: 'fixed', top: -1000, left: -1000, opacity: 0, pointerEvents: 'none' }}>
+    <div style={{ position: 'fixed', top: -1000, left: -1000, width: 10, height: 10, opacity: 0.01, pointerEvents: 'none' }}>
       <div ref={playerContainerRef}></div>
     </div>
   );

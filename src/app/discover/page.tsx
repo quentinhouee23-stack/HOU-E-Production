@@ -16,13 +16,37 @@ const CATEGORIES = [
   { id: "afro",  label: "🌍 Afrobeat"  },
 ];
 
-// 🟢 CORRECTION 3 : Le Frontend ne vérifie plus le ".mp3", il vérifie juste qu'il y a un lien http
 function hasValidPreview(track) {
   return (
     typeof track.preview === "string" &&
     track.preview.startsWith("http")
   );
 }
+
+const TrackProgressBar = ({ audioRef, isPlaying }) => {
+  const [progress, setProgress] = useState(0);
+
+  useEffect(() => {
+    let interval;
+    if (isPlaying && audioRef.current) {
+      interval = setInterval(() => {
+        if (audioRef.current.duration > 0) {
+          setProgress((audioRef.current.currentTime / audioRef.current.duration) * 100);
+        }
+      }, 250);
+    } else {
+      setProgress(0);
+    }
+    return () => clearInterval(interval);
+  }, [isPlaying, audioRef]);
+
+  return (
+    <div className="flex-1 h-1 bg-white/10 rounded-full overflow-hidden">
+      <div className="h-full bg-[#1db954] rounded-full transition-all duration-300"
+        style={{ width: `${progress}%` }} />
+    </div>
+  );
+};
 
 export default function DiscoverPage() {
   const { playlists, createPlaylist, updatePlaylist } = usePlaylists();
@@ -35,17 +59,23 @@ export default function DiscoverPage() {
   const [newPlaylistName, setNewPlaylistName] = useState("");
   const [hasSwiped,       setHasSwiped]       = useState(false);
   const [activeCategory,  setActiveCategory]  = useState("tout");
-  const [audioProgress,   setAudioProgress]   = useState(0);
   const [isPlaying,       setIsPlaying]       = useState(false);
   const [isMounted,       setIsMounted]       = useState(false);
 
   const audioRef     = useRef(null);
-  const progressRef  = useRef(null);
 
   const controls    = useAnimation();
   const dragX       = useMotionValue(0);
   const likeOpacity = useTransform(dragX, [20, 120],   [0, 1]);
   const skipOpacity = useTransform(dragX, [-20, -120], [0, 1]);
+
+  const toggleNav = (show: boolean) => {
+    if (show) {
+      window.dispatchEvent(new Event("showNav"));
+    } else {
+      window.dispatchEvent(new Event("hideNav"));
+    }
+  };
 
   useEffect(() => {
     setIsMounted(true);
@@ -53,7 +83,6 @@ export default function DiscoverPage() {
 
   const fetchDiscoveryTracks = async (categoryId = "tout", retryCount = 0) => {
     setIsLoading(true);
-    setAudioProgress(0);
     setIsPlaying(false);
     try {
       const res  = await fetch(`/api/discover?vibe=${categoryId}`);
@@ -63,12 +92,11 @@ export default function DiscoverPage() {
         const rejected = JSON.parse(localStorage.getItem("rejectedTracks") || "[]");
         const filtered = data.tracks.filter((t) => hasValidPreview(t) && !rejected.includes(t.id));
 
-        // 🟢 CORRECTION 4 : Évite la boucle infinie. Si on a rejeté trop de sons, on s'arrête après 2 essais
         if (filtered.length === 0) {
           if (retryCount < 2) {
              setTimeout(() => fetchDiscoveryTracks(categoryId, retryCount + 1), 500);
           } else {
-             setTracks([]); // Affichera "Tu as tout vu" au lieu de boucler à l'infini
+             setTracks([]); 
              setIsLoading(false);
           }
           return;
@@ -89,9 +117,8 @@ export default function DiscoverPage() {
     if (isMounted) fetchDiscoveryTracks("tout");
     return () => {
       if (audioRef.current) audioRef.current.pause();
-      clearInterval(progressRef.current);
     };
-  }, [isMounted]); // On retire fetchDiscoveryTracks des dépendances pour ne pas le rappeler
+  }, [isMounted]); 
 
   const activeTrack = tracks[currentIndex];
 
@@ -104,8 +131,6 @@ export default function DiscoverPage() {
   }, [activeTrack, controls]);
 
   useEffect(() => {
-    clearInterval(progressRef.current);
-    setAudioProgress(0);
     setIsPlaying(false);
 
     if (!audioRef.current || !activeTrack) return;
@@ -125,31 +150,22 @@ export default function DiscoverPage() {
         .then(() => {
           setIsAudioBlocked(false);
           setIsPlaying(true);
-          progressRef.current = setInterval(() => {
-            if (audio.duration > 0) {
-              setAudioProgress((audio.currentTime / audio.duration) * 100);
-            }
-          }, 250);
         })
         .catch((err) => {
           if (err.name === "NotAllowedError") {
             setIsAudioBlocked(true);
           } else if (err.name !== "AbortError") {
-            console.warn("Erreur audio silencieuse, attente d'action utilisateur :", err.name);
             setIsPlaying(false);
           }
         });
     }
 
     return () => {
-      clearInterval(progressRef.current);
       audio.pause();
     };
   }, [currentIndex, activeTrack, activeModal]);
 
   const goToNext = useCallback(() => {
-    clearInterval(progressRef.current);
-    setAudioProgress(0);
     setIsPlaying(false);
     dragX.set(0);
 
@@ -166,11 +182,13 @@ export default function DiscoverPage() {
 
   const handleSwipeIntent = (direction) => {
     setActiveModal(direction);
+    toggleNav(false);
     controls.start({ x: 0, opacity: 1, rotate: 0 });
   };
 
   const confirmSwipe = async (direction, actionData) => {
     setActiveModal("none");
+    toggleNav(true);
     setNewPlaylistName("");
     setHasSwiped(true);
 
@@ -206,15 +224,27 @@ export default function DiscoverPage() {
     }
 
     goToNext();
+    // 🟢 On remet le lecteur une fois l'action terminée
+    window.dispatchEvent(new Event("showMiniPlayer"));
   };
 
-  const cancelSwipe = () => { setActiveModal("none"); setNewPlaylistName(""); };
+  const cancelSwipe = () => { 
+    setActiveModal("none"); 
+    toggleNav(true);
+    setNewPlaylistName(""); 
+    // 🟢 Si on annule, le lecteur revient !
+    window.dispatchEvent(new Event("showMiniPlayer"));
+  };
 
   const onDragEnd = (_, info) => {
     dragX.set(0);
     if      (info.offset.x >  110) handleSwipeIntent("right");
     else if (info.offset.x < -110) handleSwipeIntent("left");
-    else controls.start({ x: 0, opacity: 1, rotate: 0 });
+    else {
+      controls.start({ x: 0, opacity: 1, rotate: 0 });
+      // 🟢 Si la carte revient au centre (pas de swipe validé), on réaffiche le lecteur
+      window.dispatchEvent(new Event("showMiniPlayer"));
+    }
   };
 
   const unlockAudio = () => {
@@ -223,10 +253,6 @@ export default function DiscoverPage() {
     audioRef.current.play()
       .then(() => {
         setIsPlaying(true);
-        progressRef.current = setInterval(() => {
-          const a = audioRef.current;
-          if (a?.duration > 0) setAudioProgress((a.currentTime / a.duration) * 100);
-        }, 250);
       })
       .catch(() => {});
   };
@@ -262,13 +288,10 @@ export default function DiscoverPage() {
         ref={audioRef} 
         preload="auto"
         onEnded={() => { 
-          clearInterval(progressRef.current); 
-          setAudioProgress(100); 
           setIsPlaying(false); 
         }} 
       />
 
-      {/* Modal droit */}
       <AnimatePresence>
         {activeModal === "right" && (
           <motion.div initial={{ opacity: 0, y: 100 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 100 }}
@@ -285,7 +308,7 @@ export default function DiscoverPage() {
                       <button key={p.id} onClick={() => confirmSwipe("right", { type: "existing", id: p.id })}
                         className="w-full flex items-center gap-4 p-3 rounded-xl hover:bg-white/10 transition-colors text-left bg-white/5 border border-white/5">
                         <div className="w-12 h-12 bg-gradient-to-br from-[#1db954] to-black rounded-md flex items-center justify-center overflow-hidden shrink-0">
-                          {p.tracks?.[0]?.image ? <img src={p.tracks[0].image} className="w-full h-full object-cover" /> : "🎵"}
+                          {p.tracks?.[0]?.image ? <img src={p.tracks[0].image} className="w-full h-full object-cover" loading="lazy" decoding="async" /> : "🎵"}
                         </div>
                         <div className="flex-1 truncate">
                           <p className="font-bold truncate">{p.name}</p>
@@ -312,7 +335,6 @@ export default function DiscoverPage() {
         )}
       </AnimatePresence>
 
-      {/* Modal gauche */}
       <AnimatePresence>
         {activeModal === "left" && (
           <motion.div initial={{ opacity: 0, y: 100 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 100 }}
@@ -339,8 +361,7 @@ export default function DiscoverPage() {
         )}
       </AnimatePresence>
 
-      {/* Main */}
-      <div className="flex-1 flex flex-col items-center justify-center px-4 pt-2 pb-6 overflow-hidden relative">
+      <div className="flex-1 flex flex-col items-center justify-center px-4 pt-24 pb-6 overflow-hidden relative">
 
         <div className="w-full max-w-sm flex gap-2 overflow-x-auto pb-4 pt-2 z-10 shrink-0 snap-x custom-scrollbar">
           {CATEGORIES.map((cat) => (
@@ -395,6 +416,8 @@ export default function DiscoverPage() {
                 dragConstraints={{ left: 0, right: 0 }}
                 dragElastic={0.18}
                 style={{ x: dragX }}
+                // 🟢 Dès qu'on touche la carte, on cache le lecteur !
+                onDragStart={() => window.dispatchEvent(new Event("hideMiniPlayer"))}
                 onDrag={(_, info) => dragX.set(info.offset.x)}
                 onDragEnd={onDragEnd}
                 animate={controls}
@@ -418,15 +441,13 @@ export default function DiscoverPage() {
                 <div className="absolute inset-0 flex flex-col p-4 sm:p-6 z-10 bg-gradient-to-b from-transparent via-black/40 to-black/95">
                   <div className="flex-1 flex items-center justify-center py-2 min-h-0">
                     <img src={activeTrack.image} alt={activeTrack.title}
+                      loading="lazy" decoding="async"
                       className="h-full max-h-[240px] aspect-square object-cover rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] pointer-events-none" />
                   </div>
 
                   <div className="shrink-0 pb-3">
                     <div className="flex items-center gap-2 mb-3">
-                      <div className="flex-1 h-1 bg-white/10 rounded-full overflow-hidden">
-                        <div className="h-full bg-[#1db954] rounded-full transition-all duration-300"
-                          style={{ width: `${audioProgress}%` }} />
-                      </div>
+                      <TrackProgressBar audioRef={audioRef} isPlaying={isPlaying} />
                       <span className="text-[10px] font-bold text-white/40 tabular-nums shrink-0">{activeTrack.duration}</span>
                     </div>
                     <h2 className="text-2xl sm:text-3xl font-black text-white leading-tight mb-1 truncate pointer-events-none">

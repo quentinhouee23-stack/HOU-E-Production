@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
-import Image from "next/image"; // 🟢 IMPORT DU COMPOSANT OPTIMISÉ
+import Image from "next/image"; 
 import { Header } from "@/components/ui/Header";
 import { usePlaylists } from "@/context/PlaylistContext";
 import { PlaylistWizard } from "@/components/playlists/PlaylistWizard";
@@ -13,7 +13,7 @@ import { motion, AnimatePresence, Reorder, useDragControls } from "framer-motion
 import { 
   ListMusic, Plus, Play, Users, UserPlus, X, Trash2, GripVertical, 
   Download, ArrowLeft, Wand2, Search, Edit2, PlayCircle, PauseCircle, 
-  CheckCircle2, AlertCircle, Clock, Flame, Mic2, Crown, Car, Coffee, Dumbbell, Radio, Star
+  CheckCircle2, AlertCircle, Clock, Flame, Mic2, Crown, Car, Coffee, Dumbbell, Radio, Star, Loader2
 } from "lucide-react"; 
 import type { Track } from "@/types";
 import { AddToPlaylistModal } from "@/components/ui/AddToPlaylistModal";
@@ -111,6 +111,22 @@ export default function PlaylistsPage() {
 
   const [trackToAdd, setTrackToAdd] = useState(null);
 
+  const [importState, setImportState] = useState({ active: false, progress: 0, text: "" });
+  
+  const [showSpotifyImportModal, setShowSpotifyImportModal] = useState(false);
+  const [spotifyUrlInput, setSpotifyUrlInput] = useState("");
+
+  // 🟢 NOUVEAU : La fonction magique qui gère la nav ET le lecteur !
+  const toggleNav = (show: boolean) => {
+    if (show) {
+      window.dispatchEvent(new Event("showNav"));
+      window.dispatchEvent(new Event("showMiniPlayer"));
+    } else {
+      window.dispatchEvent(new Event("hideNav"));
+      window.dispatchEvent(new Event("hideMiniPlayer"));
+    }
+  };
+
   const loadFriends = async () => {
     if (!user) return;
     const { data } = await supabase
@@ -131,6 +147,7 @@ export default function PlaylistsPage() {
   const openShareModal = () => {
     loadFriends();
     setShowShareModal(true);
+    toggleNav(false); 
   };
 
   const handleShare = async (friendId) => {
@@ -138,6 +155,7 @@ export default function PlaylistsPage() {
     await shareWithFriend(activePlaylist.id, friendId);
     alert("Playlist partagée avec succès !");
     setShowShareModal(false);
+    toggleNav(true); 
   };
 
   const handleCreate = async () => {
@@ -145,12 +163,93 @@ export default function PlaylistsPage() {
       await createPlaylist(newPlaylistName.trim());
       setShowCreateModal(false);
       setNewPlaylistName("");
+      toggleNav(true); 
     }
   };
 
   const handleSaveWizard = async (name: string, tracks: Track[]) => {
     await createPlaylist(name, tracks);
     setIsWizardOpen(false);
+    // 🟢 SÉCURITÉ : On s'assure de réafficher l'interface après avoir sauvegardé
+    toggleNav(true);
+  };
+
+  const executeSpotifyImport = async () => {
+    if (!spotifyUrlInput.includes("spotify")) {
+      alert("Ce lien ne semble pas être un lien Spotify valide.");
+      return;
+    }
+
+    setShowSpotifyImportModal(false); 
+    toggleNav(true); 
+    setImportState({ active: true, progress: 0, text: "Analyse du lien..." }); 
+
+    try {
+      const scrapeRes = await fetch(`/api/import-spotify?url=${encodeURIComponent(spotifyUrlInput)}`);
+      const scrapeData = await scrapeRes.json();
+
+      if (!scrapeRes.ok) throw new Error(scrapeData.error || "Erreur d'analyse du lien.");
+
+      const tracksToSearch = scrapeData.tracks || [];
+      const playlistName = scrapeData.name || "Import Spotify";
+
+      if (tracksToSearch.length === 0) throw new Error("La playlist est vide ou introuvable.");
+
+      const matchedTracks = [];
+      
+      for (let i = 0; i < tracksToSearch.length; i++) {
+        const track = tracksToSearch[i];
+        setImportState({ 
+          active: true, 
+          progress: Math.round((i / tracksToSearch.length) * 100), 
+          text: `Recherche : ${track.title}` 
+        });
+        
+        const cleanTitle = track.title.replace(/\([^)]*\)/g, '').replace(/\[[^\]]*\]/g, '').trim();
+        const searchQuery = `${cleanTitle} ${track.artist || ""}`.trim();
+
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 4000);
+
+          const searchRes = await fetch(`/api/search?q=${encodeURIComponent(searchQuery)}`, {
+            signal: controller.signal
+          });
+          
+          clearTimeout(timeoutId);
+          
+          if (searchRes.ok) {
+            const searchData = await searchRes.json();
+            if (searchData.tracks && searchData.tracks.length > 0) {
+              matchedTracks.push(searchData.tracks[0]);
+            }
+          }
+        } catch (err) {}
+      }
+
+      setImportState({ active: true, progress: 100, text: "Sauvegarde..." });
+      
+      if (matchedTracks.length > 0) {
+        const cleanTracksToSave = matchedTracks.map((t: any) => ({
+          id: t.id ? t.id.toString() : Date.now().toString() + Math.random().toString(),
+          title: t.title || "Inconnu",
+          artist: t.artist || "Inconnu",
+          image: t.image || "",
+          duration: t.duration || "0:00",
+          preview: t.preview || ""
+        }));
+
+        createPlaylist(`🎵 ${playlistName}`, cleanTracksToSave).catch(() => {});
+        alert(`Import terminé ! ${matchedTracks.length} titres ont été ajoutés.`);
+      } else {
+        alert("Aucun titre n'a pu être converti.");
+      }
+    } catch (error) {
+      alert("Erreur: " + error.message);
+    } finally {
+      setImportState({ active: false, progress: 0, text: "" });
+      setSpotifyUrlInput("");
+    }
   };
 
   useEffect(() => {
@@ -321,19 +420,73 @@ export default function PlaylistsPage() {
   const isOwner = activePlaylist?.owner_id === user?.id;
 
   return (
-    <div ref={scrollRef} className="h-[100dvh] w-full overflow-y-auto overflow-x-hidden bg-[#121212] text-white custom-scrollbar">
+    <div ref={scrollRef} className="h-[100dvh] w-full overflow-y-auto overflow-x-hidden bg-[#121212] text-white custom-scrollbar relative">
       
       <audio ref={previewAudioRef} onEnded={() => setPreviewUrl(null)} preload="auto" />
 
+      {/* 🟢 Ajout de onClose sécurisé pour réafficher le lecteur à la fermeture */}
       <AddToPlaylistModal 
         track={trackToAdd} 
         isOpen={!!trackToAdd} 
-        onClose={() => setTrackToAdd(null)} 
+        onClose={() => { setTrackToAdd(null); toggleNav(true); }} 
       />
 
       <div className="pb-32 min-h-[100dvh]">
-        <Header />
-        <div className="p-6 max-w-5xl mx-auto">
+        
+        {!activePlaylist && <Header />}
+
+        <AnimatePresence>
+          {activePlaylist && (
+            <motion.div 
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="fixed top-0 left-0 w-full p-4 z-50 bg-gradient-to-b from-[#121212]/80 to-transparent pt-6"
+            >
+              <button 
+                onClick={() => {
+                  setActivePlaylist(null);
+                  setViewMode("view");
+                  if (previewAudioRef.current) previewAudioRef.current.pause();
+                  setPreviewUrl(null);
+                  setTimeout(() => {
+                    scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+                  }, 50);
+                }} 
+                className="w-10 h-10 flex items-center justify-center bg-black/40 backdrop-blur-md rounded-full border border-white/10 hover:bg-white/20 transition-colors"
+              >
+                <ArrowLeft className="w-5 h-5 text-white" />
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {importState.active && (
+            <motion.div 
+              initial={{ y: -50, opacity: 0 }} 
+              animate={{ y: 0, opacity: 1 }} 
+              exit={{ y: -50, opacity: 0 }}
+              className="fixed top-20 left-1/2 -translate-x-1/2 w-[90%] max-w-md bg-[#1c1c1e] border border-[#1db954] shadow-[0_0_20px_rgba(29,185,84,0.3)] rounded-2xl p-4 z-[1000] flex flex-col gap-2"
+            >
+              <div className="flex items-center justify-between text-xs font-bold text-white">
+                <span className="truncate pr-4 flex items-center gap-2">
+                  <Loader2 className="w-3 h-3 text-[#1db954] animate-spin" /> {importState.text}
+                </span>
+                <span className="text-[#1db954] shrink-0">{importState.progress}%</span>
+              </div>
+              <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
+                <motion.div 
+                  className="h-full bg-[#1db954]" 
+                  initial={{ width: 0 }} 
+                  animate={{ width: `${importState.progress}%` }} 
+                />
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <div className={`max-w-5xl mx-auto ${activePlaylist ? 'pt-24 px-6' : 'p-6'}`}>
           <AnimatePresence mode="wait">
             
             {!activePlaylist ? (
@@ -346,14 +499,15 @@ export default function PlaylistsPage() {
                   </div>
                   <div className="flex items-center gap-3">
                     <button 
-                      onClick={() => window.dispatchEvent(new Event("openImportModal"))}
-                      className="bg-[#1db954]/20 hover:bg-[#1db954]/30 p-3 rounded-full transition-colors text-[#1db954] shadow-[0_0_15px_rgba(29,185,84,0.2)]"
-                      title="Importer depuis Spotify"
+                      onClick={() => { setShowSpotifyImportModal(true); toggleNav(false); }} 
+                      disabled={importState.active}
+                      className="bg-[#1db954]/20 hover:bg-[#1db954]/30 p-3 rounded-full transition-colors text-[#1db954] shadow-[0_0_15px_rgba(29,185,84,0.2)] disabled:opacity-50"
+                      title="Importer une playlist Spotify"
                     >
                       <Download className="w-6 h-6" />
                     </button>
                     <button 
-                      onClick={() => setShowCreateModal(true)}
+                      onClick={() => { setShowCreateModal(true); toggleNav(false); }}
                       className="bg-white/10 hover:bg-white/20 p-3 rounded-full transition-colors text-white"
                       title="Créer une nouvelle playlist"
                     >
@@ -363,7 +517,7 @@ export default function PlaylistsPage() {
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <button onClick={() => setIsWizardOpen(true)} className="h-32 rounded-2xl border-2 border-dashed border-white/10 hover:border-[#1db954]/50 hover:bg-[#1db954]/5 transition-all flex items-center justify-center gap-4 group">
+                  <button onClick={() => { setIsWizardOpen(true); toggleNav(false); }} className="h-32 rounded-2xl border-2 border-dashed border-white/10 hover:border-[#1db954]/50 hover:bg-[#1db954]/5 transition-all flex items-center justify-center gap-4 group">
                     <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center text-xl group-hover:scale-110 group-hover:bg-[#1db954] group-hover:text-black transition-all">
                       <Wand2 className="w-6 h-6" />
                     </div>
@@ -380,7 +534,7 @@ export default function PlaylistsPage() {
                               alt="" 
                               fill
                               sizes="80px"
-                              className="object-cover opacity-80 mix-blend-overlay" 
+                              className="object-cover" 
                             />
                           ) : (
                             <ListMusic className="w-8 h-8 text-white/50" />
@@ -411,21 +565,8 @@ export default function PlaylistsPage() {
             ) : (
 
               <motion.div key="detail" initial={{ opacity: 0, x: 50 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -50 }} className="min-h-[100dvh]">
-                <div className="flex items-center justify-between mb-6">
-                  <button onClick={() => {
-                    setActivePlaylist(null);
-                    setViewMode("view");
-                    if (previewAudioRef.current) previewAudioRef.current.pause();
-                    setPreviewUrl(null);
-                    setTimeout(() => {
-                      scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-                    }, 50);
-                  }} className="text-[#1db954] font-bold flex items-center gap-2 hover:scale-105 transition-transform">
-                    <ArrowLeft className="w-4 h-4" /> Retour à la bibliothèque
-                  </button>
-                </div>
                 
-                <div className="flex items-end gap-6 mb-8 bg-gradient-to-b from-white/10 to-transparent p-6 sm:p-10 rounded-3xl border border-white/5 relative overflow-hidden">
+                <div className="flex items-end gap-6 mb-8 bg-gradient-to-b from-white/10 to-transparent p-6 sm:p-10 rounded-3xl border border-white/5 relative overflow-hidden mt-4">
                   <div className="w-32 h-32 sm:w-48 sm:h-48 rounded-2xl shadow-2xl overflow-hidden bg-white/5 flex-shrink-0 z-10 relative flex items-center justify-center">
                     {activePlaylist?.tracks?.[0]?.image ? (
                       <Image 
@@ -557,7 +698,8 @@ export default function PlaylistsPage() {
                               </button>
 
                               <button 
-                                onClick={(e) => { e.stopPropagation(); setTrackToAdd(track); }}
+                                // 🟢 SÉCURITÉ : Cache le lecteur en ouvrant le modal d'ajout de track
+                                onClick={(e) => { e.stopPropagation(); setTrackToAdd(track); toggleNav(false); }}
                                 className="w-8 h-8 flex items-center justify-center rounded-full text-white/50 hover:bg-white/10 hover:text-white transition-all text-xl"
                               >
                                 <Plus className="w-5 h-5" />
@@ -686,13 +828,50 @@ export default function PlaylistsPage() {
           </AnimatePresence>
         </div>
 
-        <PlaylistWizard isOpen={isWizardOpen} onClose={() => setIsWizardOpen(false)} onSave={handleSaveWizard} />
+        <PlaylistWizard 
+          isOpen={isWizardOpen} 
+          onClose={() => { setIsWizardOpen(false); toggleNav(true); }} 
+          onSave={handleSaveWizard} 
+        />
+
+        <AnimatePresence>
+          {showSpotifyImportModal && (
+            <div 
+              className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-md p-6"
+              onClick={() => { setShowSpotifyImportModal(false); toggleNav(true); }}
+            >
+              <motion.div 
+                initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} 
+                onClick={(e) => e.stopPropagation()}
+                className="bg-[#1c1c1e] w-full max-w-sm rounded-[32px] p-6 border border-white/10 shadow-2xl"
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-2xl font-black text-white flex items-center gap-2">
+                    <Download className="w-6 h-6 text-[#1db954]" /> Import Spotify
+                  </h2>
+                </div>
+                <input 
+                  autoFocus
+                  value={spotifyUrlInput}
+                  onChange={(e) => setSpotifyUrlInput(e.target.value)}
+                  placeholder="Colle ton lien Spotify ici..."
+                  className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-4 text-white outline-none focus:border-[#1db954] mb-6"
+                  onKeyDown={(e) => e.key === 'Enter' && executeSpotifyImport()}
+                />
+                <div className="flex gap-3">
+                  <button onClick={() => { setShowSpotifyImportModal(false); toggleNav(true); }} className="flex-1 py-3 text-white/50 hover:text-white font-bold transition-colors">Annuler</button>
+                  <button onClick={executeSpotifyImport} disabled={!spotifyUrlInput.includes("spotify")} className="flex-1 bg-[#1db954] text-black font-black py-3 rounded-xl disabled:opacity-50 shadow-[0_0_15px_rgba(29,185,84,0.3)]">Importer</button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
 
         <AnimatePresence>
           {showCreateModal && (
             <div 
               className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-md p-6"
-              onClick={() => setShowCreateModal(false)}
+              onClick={() => { setShowCreateModal(false); toggleNav(true); }}
             >
               <motion.div 
                 initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} 
@@ -713,7 +892,7 @@ export default function PlaylistsPage() {
                   onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
                 />
                 <div className="flex gap-3">
-                  <button onClick={() => setShowCreateModal(false)} className="flex-1 py-3 text-white/50 hover:text-white font-bold transition-colors">Annuler</button>
+                  <button onClick={() => { setShowCreateModal(false); toggleNav(true); }} className="flex-1 py-3 text-white/50 hover:text-white font-bold transition-colors">Annuler</button>
                   <button onClick={handleCreate} disabled={!newPlaylistName.trim()} className="flex-1 bg-[#1db954] text-black font-black py-3 rounded-xl disabled:opacity-50 shadow-[0_0_15px_rgba(29,185,84,0.3)]">Créer</button>
                 </div>
               </motion.div>
@@ -725,7 +904,7 @@ export default function PlaylistsPage() {
           {showShareModal && (
             <div 
               className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center bg-black/80 backdrop-blur-md p-0 sm:p-6"
-              onClick={() => setShowShareModal(false)}
+              onClick={() => { setShowShareModal(false); toggleNav(true); }}
             >
               <motion.div 
                 initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} 
@@ -736,7 +915,7 @@ export default function PlaylistsPage() {
                   <h2 className="text-2xl font-black text-white flex items-center gap-2">
                     <Users className="w-6 h-6 text-[#1db954]" /> Partager avec...
                   </h2>
-                  <button onClick={() => setShowShareModal(false)} className="w-10 h-10 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center transition-colors">
+                  <button onClick={() => { setShowShareModal(false); toggleNav(true); }} className="w-10 h-10 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center transition-colors">
                     <X className="w-5 h-5 text-white" />
                   </button>
                 </div>
@@ -747,7 +926,7 @@ export default function PlaylistsPage() {
                       <AlertCircle className="w-10 h-10 text-white/20" />
                       <p className="text-white/50 mb-6">Tu n'as pas encore d'amis. Va sur ton Profil pour en ajouter !</p>
                       <button 
-                        onClick={() => setShowShareModal(false)} 
+                        onClick={() => { setShowShareModal(false); toggleNav(true); }} 
                         className="bg-white/10 hover:bg-white/20 text-white font-bold py-3 px-8 rounded-full transition-colors"
                       >
                         Fermer
