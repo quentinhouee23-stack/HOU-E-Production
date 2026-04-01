@@ -19,11 +19,11 @@ interface MusicContextValue {
   queue: Track[];
   isShuffle: boolean;
   repeatMode: "off" | "all" | "one";
-  
+
   sleepMode: SleepMode;
   sleepSeconds: number | null;
-  setSleepMode: (mode: SleepMode) => void; 
-  
+  setSleepMode: (mode: SleepMode) => void;
+
   playTrack: (track: Track, newQueue?: Track[]) => void;
   playNext: () => void;
   playPrev: () => void;
@@ -37,7 +37,7 @@ interface MusicContextValue {
   onEnded: () => void;
   setIsFullScreen: (val: boolean) => void;
   clearSeekRequest: () => void;
-  
+
   isMusicLoaded: boolean;
 }
 
@@ -47,8 +47,8 @@ function getISOWeek(date: Date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
   const dayNum = d.getUTCDay() || 7;
   d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(),0,1));
-  return d.getUTCFullYear() + "-W" + Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1)/7);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return d.getUTCFullYear() + "-W" + Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
 }
 
 const isValidYTId = (id: string | null | undefined) => {
@@ -56,23 +56,19 @@ const isValidYTId = (id: string | null | undefined) => {
 };
 
 export function MusicProvider({ children }: { children: React.ReactNode }) {
-  const { user } = useAuth(); 
-  
-  const [isMusicLoaded, setIsMusicLoaded] = useState(false);
+  const { user } = useAuth();
 
+  const [isMusicLoaded, setIsMusicLoaded] = useState(false);
   const [currentTrack, setCurrentTrack] = useState<Track | null>(null);
   const [status, setStatus] = useState<PlayerStatus>("idle");
   const [playingUrl, setPlayingUrl] = useState<string | null>(null);
-  
   const [duration, setDuration] = useState(0);
   const [volume, setVolumeState] = useState(0.8);
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [seekRequest, setSeekRequest] = useState<number | null>(null);
-
   const [queue, setQueue] = useState<Track[]>([]);
   const [isShuffle, setIsShuffle] = useState(false);
   const [repeatMode, setRepeatMode] = useState<"off" | "all" | "one">("off");
-
   const [sleepModeState, setSleepModeState] = useState<SleepMode>(null);
   const [sleepSeconds, setSleepSeconds] = useState<number | null>(null);
   const sleepModeRef = useRef<SleepMode>(null);
@@ -82,13 +78,13 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   const isShuffleRef = useRef(false);
   const repeatModeRef = useRef<"off" | "all" | "one">("off");
   const playHistoryRef = useRef<string[]>([]);
-  
+
   const currentTimeRef = useRef(0);
   const ytCacheRef = useRef<Record<string, string>>({});
   const listenAccumulatorRef = useRef(0);
   const lastPlayedSecondsRef = useRef(0);
 
-  // 1. unlockAudio accepte un videoId optionnel
+  // unlockAudio transmet le videoId directement dans l'événement
   const unlockAudio = useCallback((videoId?: string) => {
     if (typeof window === "undefined") return;
     const audio = new Audio("data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA");
@@ -100,7 +96,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     try {
       let currentCache = {};
       const savedCache = localStorage.getItem("stream_yt_cache");
-      
+
       if (savedCache) {
         const rawCache = JSON.parse(savedCache);
         for (const key in rawCache) {
@@ -138,7 +134,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     } catch (e) {
       console.error("Erreur lecture cache audio", e);
     } finally {
-      setIsMusicLoaded(true); 
+      setIsMusicLoaded(true);
     }
   }, []);
 
@@ -161,7 +157,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
 
   const saveToCache = useCallback((trackId: string, videoId: string) => {
     if (!isValidYTId(videoId)) return;
-    
+
     ytCacheRef.current[trackId] = videoId;
     try {
       localStorage.setItem("stream_yt_cache", JSON.stringify(ytCacheRef.current));
@@ -180,11 +176,11 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     setSleepModeState(mode);
     sleepModeRef.current = mode;
     if (mode === "playlistEnd") {
-        setSleepSeconds(null);
+      setSleepSeconds(null);
     } else if (mode) {
-        setSleepSeconds(parseInt(mode) * 60);
+      setSleepSeconds(parseInt(mode) * 60);
     } else {
-        setSleepSeconds(null);
+      setSleepSeconds(null);
     }
   }, []);
 
@@ -211,11 +207,11 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     if (!user) return;
     const stats = JSON.parse(localStorage.getItem("dailyStats") || "null");
     const top = JSON.parse(localStorage.getItem("weeklyTopTracks") || "null");
-    
+
     const updates: any = {};
     if (stats) updates.daily_stats = stats;
     if (top) updates.top_tracks = top;
-    
+
     if (Object.keys(updates).length > 0) {
       await supabase.from('profiles').update(updates).eq('id', user.id);
     }
@@ -246,7 +242,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       localStorage.setItem("currentWeekStr", currentWeekStr);
 
       if (user) {
-        await supabase.from('profiles').update({ 
+        await supabase.from('profiles').update({
           last_week_stats: oldStats,
           last_week_top_tracks: oldTracks,
           daily_stats: emptyDaily,
@@ -269,14 +265,14 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
         { day: "Jeu", minutes: 0 }, { day: "Ven", minutes: 0 }, { day: "Sam", minutes: 0 }, { day: "Dim", minutes: 0 },
       ];
     }
-    
+
     const todayIndex = stats.findIndex((s: any) => s.day === todayStr);
     if (todayIndex !== -1) {
       stats[todayIndex].minutes += 1;
     }
-    
+
     localStorage.setItem("dailyStats", JSON.stringify(stats));
-    window.dispatchEvent(new Event("statsUpdated")); 
+    window.dispatchEvent(new Event("statsUpdated"));
   }, [checkWeekRollover]);
 
   const updateTopTracks = useCallback(async (track: Track) => {
@@ -289,10 +285,10 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     } else {
       top.push({ ...track, plays: 1 });
     }
-    
+
     top.sort((a: any, b: any) => b.plays - a.plays);
     top = top.slice(0, 10);
-    
+
     localStorage.setItem("weeklyTopTracks", JSON.stringify(top));
     window.dispatchEvent(new Event("statsUpdated"));
   }, [checkWeekRollover]);
@@ -301,8 +297,8 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     const currentPlayed = state.playedSeconds || 0;
     currentTimeRef.current = currentPlayed;
 
-    window.dispatchEvent(new CustomEvent("musicTimeUpdate", { 
-      detail: { currentTime: currentPlayed } 
+    window.dispatchEvent(new CustomEvent("musicTimeUpdate", {
+      detail: { currentTime: currentPlayed }
     }));
 
     if (status === "playing") {
@@ -311,9 +307,9 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
 
       if (delta > 0 && delta <= 2) {
         listenAccumulatorRef.current += delta;
-        
+
         if (listenAccumulatorRef.current >= 60) {
-          listenAccumulatorRef.current -= 60; 
+          listenAccumulatorRef.current -= 60;
           addMinuteToStats();
         }
       }
@@ -323,14 +319,14 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   }, [status, addMinuteToStats]);
 
   const prefetchTrack = useCallback((track: Track) => {
-    if (!track || ytCacheRef.current[track.id]) return; 
+    if (!track || ytCacheRef.current[track.id]) return;
     const query = `${track.artist} ${track.title} audio -"full album" -"1 hour" -"live" -"compilation"`;
-    
+
     fetch(`/api/youtube?q=${encodeURIComponent(query)}`)
       .then(res => res.json())
       .then(data => {
         if (data.videoId && isValidYTId(data.videoId)) {
-          saveToCache(track.id, data.videoId); 
+          saveToCache(track.id, data.videoId);
         }
       })
       .catch(() => {});
@@ -357,7 +353,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let syncTimeout: NodeJS.Timeout;
-    
+
     if (user && currentTrack && status === "playing") {
       syncTimeout = setTimeout(() => {
         supabase.from('profiles').update({
@@ -366,14 +362,13 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
             artist: currentTrack.artist,
             image: currentTrack.image
           }
-        }).eq('id', user.id).then(); 
-      }, 10000); 
+        }).eq('id', user.id).then();
+      }, 10000);
     }
 
     return () => clearTimeout(syncTimeout);
   }, [user, currentTrack, status]);
 
-  // 2. Dans loadAndPlayUrl, passer le videoId à unlockAudio dès qu'on l'a
   const loadAndPlayUrl = useCallback(async (track: Track) => {
     if (typeof document !== "undefined") {
       document.querySelectorAll('audio').forEach(audio => {
@@ -386,25 +381,25 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
 
     setStatus("loading");
     setCurrentTrack(track);
-    currentTrackIdRef.current = track.id; 
-    
+    currentTrackIdRef.current = track.id;
+
     updateTopTracks(track);
-    syncDbStats(); 
+    syncDbStats();
 
-    lastPlayedSecondsRef.current = 0; 
-    currentTimeRef.current = 0; 
+    lastPlayedSecondsRef.current = 0;
+    currentTimeRef.current = 0;
 
-    // ✅ Cache hit : on connaît le videoId immédiatement
+    // Cache hit : videoId connu immédiatement → unlockAudio avec le videoId
     const cachedId = ytCacheRef.current[track.id];
     if (cachedId && isValidYTId(cachedId)) {
-      unlockAudio(cachedId); // ← videoId connu, iframe se lance direct dans la fenêtre gestuelle
+      unlockAudio(cachedId); // ← iOS reçoit le videoId dans la fenêtre gestuelle ✅
       setPlayingUrl(`https://www.youtube.com/watch?v=${cachedId}`);
       setStatus("playing");
       prefetchNextLogic();
       return;
     }
 
-    // ✅ Cache miss : warm-up de l'iframe (sans videoId), puis fetch
+    // Cache miss : warm-up de l'iframe sans videoId, puis fetch
     unlockAudio();
 
     try {
@@ -413,7 +408,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       const data = await res.json();
 
       if (data.videoId && isValidYTId(data.videoId)) {
-        saveToCache(track.id, data.videoId); 
+        saveToCache(track.id, data.videoId);
         setPlayingUrl(`https://www.youtube.com/watch?v=${data.videoId}`);
         setStatus("playing");
         prefetchNextLogic();
@@ -427,7 +422,6 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   }, [prefetchNextLogic, syncDbStats, updateTopTracks, saveToCache, unlockAudio]);
 
   const playTrack = useCallback(async (track: Track, newQueue?: Track[]) => {
-    // ❌ Plus de unlockAudio() manuel ici
     if (newQueue && newQueue.length > 0) {
       setQueue(newQueue);
       queueRef.current = newQueue;
@@ -435,11 +429,11 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     } else {
       const exists = queueRef.current.some(t => t.id === track.id);
       if (!exists) {
-         setQueue([]);
-         queueRef.current = [];
-         playHistoryRef.current = [];
+        setQueue([]);
+        queueRef.current = [];
+        playHistoryRef.current = [];
       } else {
-         playHistoryRef.current.push(track.id);
+        playHistoryRef.current.push(track.id);
       }
     }
     await loadAndPlayUrl(track);
@@ -451,23 +445,23 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       setStatus("idle");
       return;
     }
-    
+
     try {
       setStatus("loading");
       const res = await fetch(`/api/radio?id=${lastTrack.id}&artist=${encodeURIComponent(lastTrack.artist)}`);
       const data = await res.json();
-      
+
       if (data.tracks && data.tracks.length > 0) {
         const unplayed = data.tracks.filter((t: Track) => !playHistoryRef.current.includes(t.id));
         const nextTrack = unplayed.length > 0 ? unplayed[0] : data.tracks[0];
-        
+
         setQueue(prev => [...prev, nextTrack]);
         queueRef.current.push(nextTrack);
         playHistoryRef.current.push(nextTrack.id);
-        
+
         loadAndPlayUrl(nextTrack);
       } else {
-        setStatus("idle"); 
+        setStatus("idle");
       }
     } catch (e) {
       setStatus("idle");
@@ -475,9 +469,8 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   }, [currentTrack, loadAndPlayUrl]);
 
   const playNext = useCallback(() => {
-    // ❌ Plus de unlockAudio() manuel ici
     const q = queueRef.current;
-    
+
     const handlePlaylistEnd = () => {
       if (sleepModeRef.current === "playlistEnd") {
         setStatus("paused");
@@ -534,7 +527,6 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   }, [loadAndPlayUrl, playRadioTrack]);
 
   const playPrev = useCallback(() => {
-    // ❌ Plus de unlockAudio() manuel ici
     const q = queueRef.current;
     if (currentTimeRef.current > 3) {
       setSeekRequest(0);
@@ -562,14 +554,13 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
 
   const toggleRepeat = useCallback(() => {
     const nextMode = repeatModeRef.current === "off" ? "all" :
-                     repeatModeRef.current === "all" ? "one" : "off";
+      repeatModeRef.current === "all" ? "one" : "off";
     repeatModeRef.current = nextMode;
     setRepeatMode(nextMode);
   }, []);
 
   const togglePlayPause = useCallback(() => {
-    unlockAudio(); // ← On garde ici car pas de loadAndPlayUrl impliqué
-    
+    unlockAudio(); // ← gardé ici car pas de loadAndPlayUrl impliqué
     if (status === "playing") {
       setStatus("paused");
     } else {
@@ -580,13 +571,13 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       }
     }
   }, [status, playingUrl, currentTrack, loadAndPlayUrl, unlockAudio]);
-  
-  const seek = useCallback((time: number) => { 
-    setSeekRequest(time); 
+
+  const seek = useCallback((time: number) => {
+    setSeekRequest(time);
     window.dispatchEvent(new CustomEvent("musicTimeUpdate", { detail: { currentTime: time } }));
-    lastPlayedSecondsRef.current = time; 
+    lastPlayedSecondsRef.current = time;
   }, []);
-  
+
   const clearSeekRequest = useCallback(() => setSeekRequest(null), []);
 
   const handleEnded = useCallback(() => {
@@ -594,8 +585,8 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       const q = queueRef.current;
       const trackToReplay = q.find(t => t.id === currentTrackIdRef.current) || currentTrack;
       if (trackToReplay) {
-         loadAndPlayUrl(trackToReplay);
-         return;
+        loadAndPlayUrl(trackToReplay);
+        return;
       }
     }
     playNext();
@@ -608,29 +599,26 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
         artist: currentTrack.artist,
         album: 'HOUÉE',
         artwork: [
-          { src: currentTrack.image || 'https://api.dicebear.com/7.x/shapes/png?seed=music', sizes: '512x512', type: 'image/png' }
+          {
+            // ← dicebear v9 au lieu de v7
+            src: currentTrack.image || 'https://api.dicebear.com/9.x/shapes/png?seed=music',
+            sizes: '512x512',
+            type: 'image/png'
+          }
         ]
       });
 
-      navigator.mediaSession.setActionHandler('play', () => {
-        togglePlayPause(); 
-      });
-      navigator.mediaSession.setActionHandler('pause', () => {
-        setStatus("paused");
-      });
-      navigator.mediaSession.setActionHandler('previoustrack', () => {
-        playPrev();
-      });
-      navigator.mediaSession.setActionHandler('nexttrack', () => {
-        playNext();
-      });
+      navigator.mediaSession.setActionHandler('play', () => { togglePlayPause(); });
+      navigator.mediaSession.setActionHandler('pause', () => { setStatus("paused"); });
+      navigator.mediaSession.setActionHandler('previoustrack', () => { playPrev(); });
+      navigator.mediaSession.setActionHandler('nexttrack', () => { playNext(); });
     }
   }, [currentTrack, playNext, playPrev, togglePlayPause]);
 
   const contextValue = useMemo(() => ({
     currentTrack, status, playingUrl, duration, volume,
     isFullScreen, seekRequest, queue, isShuffle, repeatMode,
-    sleepMode: sleepModeState, sleepSeconds, setSleepMode, 
+    sleepMode: sleepModeState, sleepSeconds, setSleepMode,
     playTrack, playNext, playPrev, toggleShuffle, toggleRepeat, togglePlayPause, setVolume, seek,
     onProgress: handleProgress,
     onDuration: setDuration,
@@ -640,7 +628,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   }), [
     currentTrack, status, playingUrl, duration, volume,
     isFullScreen, seekRequest, queue, isShuffle, repeatMode,
-    sleepModeState, sleepSeconds, 
+    sleepModeState, sleepSeconds,
     playTrack, playNext, playPrev, setSleepMode, toggleShuffle, toggleRepeat, togglePlayPause, seek, handleProgress, handleEnded, clearSeekRequest,
     isMusicLoaded
   ]);
