@@ -1,20 +1,48 @@
 // @ts-nocheck
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/context/AuthContext";
 import { motion } from "framer-motion";
-import { User } from "lucide-react"; 
+import { User, Activity } from "lucide-react"; 
+import { supabase } from "@/lib/supabase";
 
 export function Header() {
   const { user } = useAuth();
+  const [tokensUsed, setTokensUsed] = useState(0);
   
+  useEffect(() => {
+    const fetchTokens = async () => {
+      try {
+        const today = new Date().toISOString().split('T')[0];
+        const { data } = await supabase.from('api_usage').select('tokens').eq('date', today).single();
+        if (data) {
+          setTokensUsed(data.tokens);
+        }
+      } catch (e) {
+        console.error("Erreur lecture tokens", e);
+      }
+    };
+    
+    fetchTokens();
+    
+    const interval = setInterval(fetchTokens, 60000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const tokenPercentage = Math.min((tokensUsed / 10000) * 100, 100);
+  
+  const getProgressColor = () => {
+    if (tokenPercentage < 50) return "bg-[#1db954]";
+    if (tokenPercentage < 85) return "bg-orange-500";
+    return "bg-red-500";
+  };
+
   return (
-    // 🟢 CORRECTION : pt-[env(safe-area-inset-top)] permet de glisser sous l'encoche
     <header className="fixed top-0 left-0 w-full z-[500] flex items-center justify-between px-4 sm:px-8 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] bg-[#121212]/95 backdrop-blur-md border-b border-white/5">
       
-      <Link href="/" className="hover:opacity-80 transition-opacity">
+      <Link href="/" className="hover:opacity-80 transition-opacity flex items-center gap-4">
         <h1 
           className="text-3xl text-white tracking-widest mt-1" 
           style={{ fontFamily: "'Dancing Script', 'Brush Script MT', cursive", fontWeight: 600 }}
@@ -24,6 +52,26 @@ export function Header() {
       </Link>
       
       <div className="flex items-center gap-4 mt-1">
+        
+        {/* 🟢 CORRECTION : Retrait du "hidden sm:flex" pour l'afficher sur mobile */}
+        {user && (
+          <div className="flex flex-col items-end mr-2 cursor-help group" title={`${tokensUsed} / 10000 jetons utilisés aujourd'hui`}>
+            <div className="flex items-center gap-1.5 mb-1">
+              <Activity className="w-3 h-3 text-white/50 group-hover:text-white transition-colors" />
+              <span className="text-[10px] text-white/50 font-mono font-bold group-hover:text-white transition-colors">
+                API : {tokensUsed}
+              </span>
+            </div>
+            <div className="w-20 h-1.5 bg-white/10 rounded-full overflow-hidden">
+              <motion.div 
+                initial={{ width: 0 }}
+                animate={{ width: `${tokenPercentage}%` }}
+                className={`h-full rounded-full ${getProgressColor()}`}
+              />
+            </div>
+          </div>
+        )}
+
         {user ? (
           <Link href="/profile" className="flex items-center gap-3 rounded-full focus:outline-none group">
             <motion.span

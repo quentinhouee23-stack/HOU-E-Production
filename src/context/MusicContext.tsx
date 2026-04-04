@@ -84,7 +84,6 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   const listenAccumulatorRef = useRef(0);
   const lastPlayedSecondsRef = useRef(0);
 
-  // unlockAudio transmet le videoId directement dans l'événement
   const unlockAudio = useCallback((videoId?: string) => {
     if (typeof window === "undefined") return;
     const audio = new Audio("data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA");
@@ -322,7 +321,8 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     if (!track || ytCacheRef.current[track.id]) return;
     const query = `${track.artist} ${track.title} audio -"full album" -"1 hour" -"live" -"compilation"`;
 
-    fetch(`/api/youtube?q=${encodeURIComponent(query)}`)
+    // 🟢 NOUVEAU : On ajoute &bg=true pour signaler au serveur qu'il a le temps et qu'il ne doit pas consommer de tokens
+    fetch(`/api/youtube?q=${encodeURIComponent(query)}&bg=true`)
       .then(res => res.json())
       .then(data => {
         if (data.videoId && isValidYTId(data.videoId)) {
@@ -389,17 +389,15 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     lastPlayedSecondsRef.current = 0;
     currentTimeRef.current = 0;
 
-    // Cache hit : videoId connu immédiatement → unlockAudio avec le videoId
     const cachedId = ytCacheRef.current[track.id];
     if (cachedId && isValidYTId(cachedId)) {
-      unlockAudio(cachedId); // ← iOS reçoit le videoId dans la fenêtre gestuelle ✅
+      unlockAudio(cachedId); 
       setPlayingUrl(`https://www.youtube.com/watch?v=${cachedId}`);
       setStatus("playing");
       prefetchNextLogic();
       return;
     }
 
-    // Cache miss : warm-up de l'iframe sans videoId, puis fetch
     unlockAudio();
 
     try {
@@ -560,7 +558,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const togglePlayPause = useCallback(() => {
-    unlockAudio(); // ← gardé ici car pas de loadAndPlayUrl impliqué
+    unlockAudio(); 
     if (status === "playing") {
       setStatus("paused");
     } else {
@@ -600,7 +598,6 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
         album: 'HOUÉE',
         artwork: [
           {
-            // ← dicebear v9 au lieu de v7
             src: currentTrack.image || 'https://api.dicebear.com/9.x/shapes/png?seed=music',
             sizes: '512x512',
             type: 'image/png'

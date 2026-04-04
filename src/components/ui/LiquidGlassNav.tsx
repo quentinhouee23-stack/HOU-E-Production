@@ -1,333 +1,483 @@
 // @ts-nocheck
 "use client";
 
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback, useTransition } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { Home, Search, ListMusic, Compass, X } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, LayoutGroup, useMotionValue, useSpring, useTransform } from "framer-motion";
 import { cn } from "@/lib/utils";
+import GlassSurface from "./GlassSurface";
 
-const navItems = [
-  { href: "/", label: "Accueil", icon: Home },
-  { href: "/discover", label: "Découverte", icon: Compass },
-  { href: "/playlists", label: "Playlists", icon: ListMusic },
-  { href: "/search", label: "Recherche", icon: Search, isSearch: true },
-];
+// ─── Nav items ────────────────────────────────────────────────────────────────
+const NAV_ITEMS = [
+  { href: "/",      label: "Accueil",    Icon: Home,      isSearch: false },
+  { href: "/discover",  label: "Découverte", Icon: Compass,   isSearch: false },
+  { href: "/playlists", label: "Playlists",  Icon: ListMusic, isSearch: false },
+  { href: "/search",    label: "Recherche",  Icon: Search,    isSearch: true  },
+] as const;
 
-// 🟢 OPTIMISATION : Ressort plus doux et moins gourmand en calculs (stiffness 350 au lieu de 500)
-const springConfig = { type: "spring", stiffness: 350, damping: 30, mass: 1 };
-const morphTransition = { duration: 0.25, ease: "easeOut" };
+// ─── Motion configs ───────────────────────────────────────────────────────────
+const PILL_SPRING  = { type: "spring", stiffness: 450, damping: 35, mass: 0.6 } as const;
+const SLIDE_SPRING = { type: "spring", stiffness: 450, damping: 35, mass: 0.6 } as const;
+const FAST_TWEEN   = { type: "tween",  duration: 0.12, ease: "easeOut" } as const;
 
+
+// ─── Props partagés pour GlassSurface ────────────────────────────────────────
+const GLASS_PROPS = {
+  width:            "100%",
+  height:           "100%",
+  borderRadius:     9999,
+  borderWidth:      0.05,
+  distortionScale:  -150,  // La force de la déformation liquide
+  brightness:       10,    // Luminosité très basse pour le dark mode
+  opacity:          0.05,  // 🟢 TRÈS IMPORTANT : Presque transparent pour voir au travers !
+  blur:             8,     // Niveau de flou de la distorsion
+  backgroundOpacity: 0.1,  // Teinte de fond ultra légère
+  saturation:       1.5,
+  redOffset:        8,     // Aberration chromatique rouge
+  greenOffset:      0,
+  blueOffset:       -8,    // Aberration chromatique bleue
+} as const;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPOSANT : NavSlot
+// ─────────────────────────────────────────────────────────────────────────────
+function NavSlot({
+  item,
+  isActive,
+  isDragging,
+}: {
+  item: typeof NAV_ITEMS[number];
+  isActive: boolean;
+  isDragging: boolean;
+}) {
+  return (
+    <div className="relative flex flex-col items-center justify-center h-12 flex-1 rounded-full cursor-pointer z-10">
+      {isActive && !isDragging && (
+        <motion.div
+          layoutId="active-pill"
+          transition={PILL_SPRING}
+          className="absolute inset-0 rounded-full border border-white/10 bg-white/5 shadow-[inset_0_1px_0_rgba(255,255,255,0.1),0_0_15px_rgba(29,185,84,0.1)]"
+          style={{ willChange: "transform" }}
+        />
+      )}
+      <motion.span
+        className="pointer-events-none relative z-10"
+        animate={{ y: isActive ? -1 : 0 }}
+        transition={FAST_TWEEN}
+      >
+        <item.Icon
+          style={{
+            width:       22,
+            height:      22,
+            color:       isActive ? "#1db954" : "rgba(255,255,255,0.4)",
+            strokeWidth: isActive ? 2.5 : 2,
+            filter:      isActive ? "drop-shadow(0 0 8px rgba(29,185,84,0.4))" : "none",
+            transition:  "all 0.2s ease",
+          }}
+        />
+      </motion.span>
+      <motion.span
+        initial={false}
+        animate={{ opacity: isActive ? 1 : 0, y: isActive ? 0 : 5, scale: isActive ? 1 : 0.8 }}
+        transition={FAST_TWEEN}
+        aria-hidden={!isActive}
+        className="absolute bottom-[3px] pointer-events-none font-bold tracking-wider text-[#1db954] text-[9px] drop-shadow-[0_0_8px_rgba(29,185,84,0.5)] z-10"
+      >
+        {item.label}
+      </motion.span>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Export Principal
+// ─────────────────────────────────────────────────────────────────────────────
 export function LiquidGlassNav() {
   const pathname = usePathname();
-  const router = useRouter();
+  const router   = useRouter();
 
-  const [isSearchActive, setIsSearchActive] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
+  const [isPending, startTransition] = useTransition();
 
-  const containerRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  
-  const [dragIndex, setDragIndex] = useState<number | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const [optimisticIndex, setOptimisticIndex] = useState<number | null>(null);
+  const [isSearchActive, setIsSearchActive] = useState(() => pathname === "/search");
+  const [searchQuery,    setSearchQuery]    = useState("");
+  const [dragIndex,      setDragIndex]      = useState<number | null>(null);
+  const [isDragging,     setIsDragging]     = useState(false);
+  const [optimisticIdx,  setOptimisticIdx]  = useState<number | null>(null);
+  const [isVisible,      setIsVisible]      = useState(true);
 
-  const [bottomOffset, setBottomOffset] = useState(24); 
-  const [isVisible, setIsVisible] = useState(true);
+  const [containerW, setContainerW] = useState(400);
+  const dragX       = useMotionValue(0);
+  const smoothDragX = useSpring(dragX, { stiffness: 600, damping: 40, mass: 0.5 });
 
-  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const maxDragX = Math.max(containerW - 72, 100);
+  const pillScale = useTransform(
+    smoothDragX,
+    [0, Math.max(0, maxDragX - 100), Math.max(0, maxDragX - 50), maxDragX],
+    [1, 1, 0.4, 1]
+  );
 
+  const containerRef      = useRef<HTMLDivElement>(null);
+  const inputRef          = useRef<HTMLInputElement>(null);
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── ResizeObserver pour la largeur du container ───────────────────────────
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const observer = new ResizeObserver((entries) => {
+      setContainerW(entries[0].contentRect.width);
+    });
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, []);
+
+  // 🟢 ── Gestion ultra-fluide du clavier virtuel ────────────────────────────
   useEffect(() => {
     const vv = window?.visualViewport;
     if (!vv) return;
-
-    const updateOffset = () => {
-      const offset = window.innerHeight - vv.height;
-      setBottomOffset(offset > 0 ? offset + 24 : 24);
+    
+    const updateKeyboardHeight = () => {
+      const keyboardHeight = window.innerHeight - vv.height;
+      // On met à jour directement le CSS sans passer par un setState pour garantir les 60 FPS
+      document.documentElement.style.setProperty('--keyboard-height', `${Math.max(0, keyboardHeight)}px`);
     };
 
-    vv.addEventListener("resize", updateOffset);
-    updateOffset();
-
+    // On écoute le redimensionnement ET le scroll (indispensable pour les rebonds iOS)
+    vv.addEventListener("resize", updateKeyboardHeight);
+    vv.addEventListener("scroll", updateKeyboardHeight);
+    updateKeyboardHeight();
+    
     return () => {
-      vv.removeEventListener("resize", updateOffset);
+      vv.removeEventListener("resize", updateKeyboardHeight);
+      vv.removeEventListener("scroll", updateKeyboardHeight);
     };
   }, []);
 
+  // ── Visibilité (showNav / hideNav) ────────────────────────────────────────
   useEffect(() => {
-    const handleShow = () => setIsVisible(true);
-    const handleHide = () => setIsVisible(false);
-
-    window.addEventListener("showNav", handleShow);
-    window.addEventListener("hideNav", handleHide);
-
+    const show = () => setIsVisible(true);
+    const hide = () => setIsVisible(false);
+    window.addEventListener("showNav", show);
+    window.addEventListener("hideNav", hide);
     return () => {
-      window.removeEventListener("showNav", handleShow);
-      window.removeEventListener("hideNav", handleHide);
+      window.removeEventListener("showNav", show);
+      window.removeEventListener("hideNav", hide);
     };
   }, []);
 
+  useEffect(() => { NAV_ITEMS.forEach((i) => router.prefetch(i.href)); }, [router]);
+
   useEffect(() => {
-    navItems.forEach(item => {
-      router.prefetch(item.href);
+    setOptimisticIdx(null);
+    setIsSearchActive((prev) => {
+      const isSearch = pathname === "/search";
+      return prev !== isSearch ? isSearch : prev;
     });
-  }, [router]);
-
-  useEffect(() => {
-    setOptimisticIndex(null);
-    if (pathname === "/search") {
-      setIsSearchActive(true);
-    } else {
-      setIsSearchActive(false);
-      setSearchQuery(""); 
-    }
+    if (pathname !== "/search") setSearchQuery("");
   }, [pathname]);
 
   useEffect(() => {
-    const handleCloseSearch = () => setIsSearchActive(false);
-    const handleOpenSearch = () => {
-      setIsSearchActive(true);
-      setTimeout(() => inputRef.current?.focus(), 100);
+    const close = () => { if (!isPending) setIsSearchActive(false); };
+    const open  = () => {
+      if (!isPending) {
+        setIsSearchActive(true);
+        setTimeout(() => inputRef.current?.focus(), 400);
+      }
     };
-
-    window.addEventListener("closeSearchNav", handleCloseSearch);
-    window.addEventListener("openSearchNav", handleOpenSearch);
-
+    window.addEventListener("closeSearchNav", close);
+    window.addEventListener("openSearchNav",  open);
     return () => {
-      window.removeEventListener("closeSearchNav", handleCloseSearch);
-      window.removeEventListener("openSearchNav", handleOpenSearch);
+      window.removeEventListener("closeSearchNav", close);
+      window.removeEventListener("openSearchNav",  open);
     };
+  }, [isPending]);
+
+  const computeIndex = useCallback((clientX: number): number => {
+    if (!containerRef.current) return 0;
+    const { left, width } = containerRef.current.getBoundingClientRect();
+    const x = Math.max(0, Math.min(clientX - left, width));
+    return Math.min(3, Math.floor((x / width) * 4));
   }, []);
 
-  const updateDragPosition = (clientX: number) => {
-    if (!containerRef.current) return;
-    const rect = containerRef.current.getBoundingClientRect();
-    const x = clientX - rect.left;
-    
-    const totalWidth = rect.width;
-    const searchWidth = 64; 
-    const gap = 12; 
-    const leftPillWidth = totalWidth - searchWidth - gap;
-
-    let index = 0;
-    if (x > leftPillWidth + gap / 2) {
-       index = 3; 
-    } else {
-       const itemWidth = leftPillWidth / 3;
-       index = Math.floor(x / itemWidth);
-       index = Math.max(0, Math.min(index, 2));
-    }
-    
-    setDragIndex((prev) => (prev !== index ? index : prev));
-  };
-
-  const handlePointerDown = (e: React.PointerEvent) => {
-    if (isSearchActive) return;
+  const handlePointerDown = useCallback((e: React.PointerEvent) => {
+    if (isSearchActive || isPending) return;
     setIsDragging(true);
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
-    updateDragPosition(e.clientX);
-  };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    const rect = containerRef.current.getBoundingClientRect();
+    dragX.set(e.clientX - rect.left - 36);
+    setDragIndex(computeIndex(e.clientX));
+  }, [isSearchActive, isPending, computeIndex, dragX]);
 
-  const handlePointerMove = (e: React.PointerEvent) => {
-    if (!isDragging || isSearchActive) return;
-    updateDragPosition(e.clientX);
-  };
+  const handlePointerMove = useCallback((e: React.PointerEvent) => {
+    if (!isDragging || isSearchActive || isPending) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
+    dragX.set(x - 36);
+    setDragIndex(computeIndex(e.clientX));
+  }, [isDragging, isSearchActive, isPending, computeIndex, dragX]);
 
-  const handlePointerUp = (e: React.PointerEvent) => {
+  const handlePointerUp = useCallback((e: React.PointerEvent) => {
     if (!isDragging) return;
     setIsDragging(false);
-    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+    (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    if (isPending) return;
 
-    if (dragIndex !== null) {
-      const item = navItems[dragIndex];
-      setOptimisticIndex(dragIndex); 
+    const idx  = computeIndex(e.clientX);
+    const item = NAV_ITEMS[idx];
+    setOptimisticIdx(idx);
 
-      if (item.isSearch) {
+    if (item.isSearch) {
+      if (!isSearchActive) {
         setIsSearchActive(true);
-        router.push("/search");
-        setTimeout(() => inputRef.current?.focus(), 100);
+        startTransition(() => { router.push("/search"); });
+        setTimeout(() => inputRef.current?.focus(), 400);
+      }
+    } else {
+      if (item.href === "/" && pathname === "/") {
+        window.dispatchEvent(new Event("resetHomeView"));
+      } else if (item.href === "/playlists" && pathname === "/playlists") {
+        window.dispatchEvent(new Event("resetPlaylistsView"));
       } else {
-        if (item.href === "/") {
-          if (pathname === "/") window.dispatchEvent(new Event("resetHomeView"));
-          else router.push("/");
-        } else if (item.href === "/playlists") {
-          if (pathname === "/playlists") window.dispatchEvent(new Event("resetPlaylistsView"));
-          else router.push(item.href);
-        } else {
-          router.push(item.href);
-        }
+        startTransition(() => { router.push(item.href); });
       }
     }
     setDragIndex(null);
-  };
+  }, [isDragging, computeIndex, pathname, router, isSearchActive, isPending]);
 
-  const currentIndex = navItems.findIndex(item => pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href)));
-  const activePillIndex = dragIndex !== null ? dragIndex : (optimisticIndex !== null ? optimisticIndex : currentIndex);
+  const currentIdx    = NAV_ITEMS.findIndex(
+    (i) => pathname === i.href || (i.href !== "/" && pathname.startsWith(i.href))
+  );
+  const activePillIdx = dragIndex !== null
+    ? dragIndex
+    : optimisticIdx !== null
+      ? optimisticIdx
+      : currentIdx;
 
-  const leftItems = navItems.slice(0, 3);
+  const openSearch = useCallback(() => {
+    if (isPending || isSearchActive) return;
+    setOptimisticIdx(3);
+    setIsSearchActive(true);
+    startTransition(() => { router.push("/search"); });
+    setTimeout(() => inputRef.current?.focus(), 400);
+  }, [isPending, isSearchActive, router]);
+
+  const closeSearch = useCallback(() => {
+    if (isPending || !isSearchActive) return;
+    setOptimisticIdx(0);
+    setIsSearchActive(false);
+    setSearchQuery("");
+    if (pathname === "/") {
+      window.dispatchEvent(new Event("resetHomeView"));
+    } else {
+      startTransition(() => { router.push("/"); });
+    }
+  }, [isPending, isSearchActive, pathname, router]);
 
   return (
     <AnimatePresence>
       {isVisible && (
-        <motion.nav 
-          initial={{ y: 100, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          exit={{ y: 100, opacity: 0 }}
-          transition={{ type: "spring", stiffness: 400, damping: 30 }}
-          className="fixed left-1/2 -translate-x-1/2 w-[92%] max-w-md z-[100] select-none touch-none transition-all duration-150 ease-out"
-          style={{ bottom: `${bottomOffset}px` }}
+        <motion.nav
+          initial={{ y: 120, opacity: 0 }}
+          animate={{ y: 0,   opacity: 1 }}
+          exit={{    y: 120, opacity: 0 }}
+          transition={{ type: "spring", stiffness: 370, damping: 32 }}
+          className="fixed left-1/2 -translate-x-1/2 w-[92%] max-w-md z-[100] select-none"
+          // 🟢 La magie opère ici : La barre se soulève en utilisant la variable CSS sans passer par React
+          style={{ 
+            bottom: "calc(24px + var(--keyboard-height, 0px))",
+            transition: "bottom 0.15s ease-out" 
+          }}
         >
+          {/* Ombre portée */}
           <div
-            ref={containerRef}
-            onPointerDown={handlePointerDown}
-            onPointerMove={handlePointerMove}
-            onPointerUp={handlePointerUp}
-            onPointerCancel={handlePointerUp}
-            className="relative w-full h-16"
-          >
-            <AnimatePresence mode="wait">
-              
-              {isSearchActive ? (
-                <motion.div
-                  key="search-mode"
-                  initial={{ opacity: 0, scale: 0.95 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.95 }}
-                  transition={morphTransition}
-                  className="flex w-full h-full gap-3 relative"
-                >
-                  <motion.button
-                    whileTap={{ scale: 0.9 }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setOptimisticIndex(0);
-                      setIsSearchActive(false);
-                      setSearchQuery(""); 
-                      if (pathname === "/") window.dispatchEvent(new Event("resetHomeView"));
-                      else router.push("/");
-                    }}
-                    className="w-16 h-16 flex items-center justify-center bg-white/5 backdrop-blur-md rounded-full border border-white/10 shadow-2xl shrink-0 text-white/60 hover:text-[#1db954] transition-colors cursor-pointer relative overflow-hidden"
-                  >
-                    <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent pointer-events-none opacity-50" />
-                    <Home className="w-6 h-6 relative z-10" />
-                  </motion.button>
+            aria-hidden
+            style={{
+              position:     "absolute",
+              inset:        0,
+              borderRadius: "9999px",
+              transform:    "scaleX(1.05) scaleY(1.4) translateY(10px)",
+              filter:       "blur(20px)",
+              background:   "rgba(0,0,0,0.6)",
+              pointerEvents:"none",
+              zIndex:       -1,
+            }}
+          />
 
-                  <div className="flex-1 relative h-full flex items-center bg-white/5 backdrop-blur-md rounded-full border border-white/10 shadow-2xl overflow-hidden">
-                    <div className="absolute inset-x-0 top-0 h-[1px] bg-gradient-to-r from-transparent via-white/20 to-transparent pointer-events-none" />
-                    <Search className="w-5 h-5 absolute left-4 text-white/40 pointer-events-none" />
-                    <input
-                      ref={inputRef}
-                      autoFocus
-                      value={searchQuery}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setSearchQuery(val);
-                        if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-                        searchTimeoutRef.current = setTimeout(() => {
-                          router.replace(val.trim() !== "" ? `/search?q=${encodeURIComponent(val)}` : `/search`);
-                        }, 400); 
-                      }}
-                      placeholder="Artistes, titres..."
-                      className="w-full h-full bg-transparent pl-12 pr-12 outline-none text-white font-medium placeholder:text-white/40"
-                    />
-                    <AnimatePresence>
-                      {searchQuery.length > 0 && (
-                        <motion.button
-                          initial={{ opacity: 0, scale: 0.8 }}
-                          animate={{ opacity: 1, scale: 1 }}
-                          exit={{ opacity: 0, scale: 0.8 }}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSearchQuery("");
-                            router.replace(`/search`);
-                            inputRef.current?.focus(); 
-                          }}
-                          className="absolute right-3 w-8 h-8 flex items-center justify-center rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors"
-                        >
-                          <X className="w-4 h-4" />
-                        </motion.button>
-                      )}
-                    </AnimatePresence>
-                  </div>
-                </motion.div>
-
-              ) : (
-                <motion.div
-                  key="nav-mode"
-                  initial={{ opacity: 0, scale: 0.95 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.95 }}
-                  transition={morphTransition}
-                  className="flex w-full h-full gap-3 relative"
-                >
-                  <div className="flex-1 flex items-center justify-around bg-white/5 backdrop-blur-md rounded-full border border-white/10 shadow-2xl px-2 relative overflow-hidden">
-                    <div className="absolute inset-x-0 top-0 h-[1px] bg-gradient-to-r from-transparent via-white/20 to-transparent pointer-events-none" />
-                    
-                    {leftItems.map((item, index) => {
-                      const isActive = activePillIndex === index;
-                      return (
-                        <div key={item.href} className="relative flex flex-col items-center justify-center h-12 rounded-full flex-1 cursor-pointer">
-                          {isActive && (
-                            <motion.div
-                              layoutId="liquid-pill"
-                              transition={springConfig}
-                              className="absolute inset-0 rounded-full bg-white/10 border border-white/30"
-                              style={{
-                                boxShadow: `
-                                  inset 2px 0 4px rgba(255, 0, 0, 0.1), 
-                                  inset -2px 0 4px rgba(0, 255, 255, 0.1),
-                                  0 8px 20px rgba(0,0,0,0.3)
-                                `,
-                                // 🟢 OPTIMISATION : Forcer l'accélération GPU pour fluidifier le glissement
-                                willChange: "transform, width" 
-                              }}
-                            />
-                          )}
-                          <motion.span 
-                            className="relative z-10 pointer-events-none"
-                            animate={{ y: isActive ? -2 : 0 }}
-                            transition={springConfig}
-                          >
-                            <item.icon
-                              className={cn("w-6 h-6 transition-colors duration-500", isActive ? "text-[#1db954]" : "text-white/30")}
-                              strokeWidth={isActive ? 2.5 : 2}
-                            />
-                          </motion.span>
-                          <motion.span 
-                            initial={false}
-                            animate={{ opacity: isActive ? 1 : 0, y: isActive ? 0 : 5, scale: isActive ? 1 : 0.8 }}
-                            transition={springConfig}
-                            className="relative z-10 text-[9px] font-bold pointer-events-none text-[#1db954] absolute bottom-0.5"
-                          >
-                            {item.label}
-                          </motion.span>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  <div className="w-16 h-16 flex items-center justify-center bg-white/5 backdrop-blur-md rounded-full border border-white/10 shadow-2xl shrink-0 relative cursor-pointer overflow-hidden">
-                    <div className="absolute inset-0 bg-gradient-to-br from-white/20 via-transparent to-black/30 pointer-events-none opacity-50" />
-                    <div className="absolute top-2 left-3 w-4 h-2 bg-white/30 rounded-full blur-[2px] -rotate-15 pointer-events-none" />
-                    
-                    {activePillIndex === 3 && (
-                      <motion.div
-                        layoutId="liquid-pill"
-                        className="absolute inset-0 rounded-full bg-white/15 border border-white/40 shadow-[inset_0_0_15px_rgba(255,255,255,0.15)]"
-                        transition={springConfig}
-                        // 🟢 OPTIMISATION : Forcer l'accélération GPU
-                        style={{ willChange: "transform, width" }}
-                      />
-                    )}
-                    <motion.span className="relative z-10 pointer-events-none" animate={{ scale: activePillIndex === 3 ? 1.1 : 1 }}>
-                      <Search className={cn("w-6 h-6", activePillIndex === 3 ? "text-[#1db954]" : "text-white/30")} strokeWidth={activePillIndex === 3 ? 2.5 : 2} />
-                    </motion.span>
-                  </div>
-
-                </motion.div>
+          <LayoutGroup>
+            <div
+              ref={containerRef}
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
+              onPointerCancel={handlePointerUp}
+              className={cn(
+                "relative w-full h-16 flex gap-3 touch-none",
+                isSearchActive ? "flex-row-reverse" : "flex-row"
               )}
-            </AnimatePresence>
-          </div>
+              style={{ cursor: isSearchActive ? "default" : "pointer" }}
+            >
+
+              {/* ── Pill de drag flottante ───────────────────────────────── */}
+              {isDragging && !isSearchActive && (
+                <motion.div
+                  layoutId="active-pill"
+                  transition={PILL_SPRING}
+                  className="absolute rounded-full border border-white/10 bg-white/5 shadow-[inset_0_1px_0_rgba(255,255,255,0.1),0_0_15px_rgba(29,185,84,0.1)] z-30 pointer-events-none"
+                  style={{
+                    x:     smoothDragX,
+                    width: 72,
+                    height:48,
+                    top:   8,
+                    scale: pillScale,
+                    willChange: "transform",
+                  }}
+                />
+              )}
+
+              {/* ── Pill principal (nav / search input) ─────────────────── */}
+              <motion.div
+                layout
+                transition={SLIDE_SPRING}
+                className="flex-1 h-16 rounded-full relative overflow-hidden shadow-2xl z-10"
+              >
+                {/* GlassSurface en fond */}
+                <GlassSurface
+                  {...GLASS_PROPS}
+                  style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }}
+                />
+
+                {/* Contenu animé par-dessus */}
+                <AnimatePresence initial={false}>
+                  {!isSearchActive ? (
+                    <motion.div
+                      key="nav"
+                      initial={{ opacity: 0, x: -60 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{    opacity: 0, x: -60 }}
+                      transition={SLIDE_SPRING}
+                      className="absolute inset-0 flex items-center justify-around px-2 z-10"
+                    >
+                      {NAV_ITEMS.slice(0, 3).map((item, index) => (
+                        <NavSlot
+                          key={item.href}
+                          item={item}
+                          isActive={activePillIdx === index}
+                          isDragging={isDragging}
+                        />
+                      ))}
+                    </motion.div>
+                  ) : (
+                    <motion.div
+                      key="search"
+                      initial={{ opacity: 0, x: 60 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{    opacity: 0, x: 60 }}
+                      transition={SLIDE_SPRING}
+                      className="absolute inset-0 flex items-center px-5 gap-3 z-10"
+                    >
+                      <Search className="w-5 h-5 text-white/50 shrink-0" strokeWidth={2.5} />
+                      <input
+                        ref={inputRef}
+                        value={searchQuery}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setSearchQuery(val);
+                          if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+                          searchDebounceRef.current = setTimeout(() => {
+                            startTransition(() => {
+                              router.replace(val.trim() ? `/search?q=${encodeURIComponent(val)}` : "/search");
+                            });
+                          }, 300);
+                        }}
+                        placeholder="Artistes, titres, albums…"
+                        className="flex-1 bg-transparent outline-none font-medium text-white placeholder:text-white/30"
+                        style={{ fontSize: 16 }}
+                      />
+                      <AnimatePresence>
+                        {searchQuery.length > 0 && (
+                          <motion.button
+                            key="clear"
+                            initial={{ opacity: 0, scale: 0.5 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            exit={{    opacity: 0, scale: 0.5 }}
+                            whileTap={{ scale: 0.8 }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSearchQuery("");
+                              startTransition(() => { router.replace("/search"); });
+                              inputRef.current?.focus();
+                            }}
+                            className="shrink-0 w-7 h-7 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-colors"
+                          >
+                            <X className="w-4 h-4 text-white/70" strokeWidth={2.5} />
+                          </motion.button>
+                        )}
+                      </AnimatePresence>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </motion.div>
+
+              {/* ── Bouton loupe / retour ────────────────────────────────── */}
+              <motion.button
+                layout
+                onClick={isSearchActive ? closeSearch : openSearch}
+                transition={SLIDE_SPRING}
+                className="w-16 h-16 rounded-full shrink-0 relative overflow-hidden flex items-center justify-center z-20 cursor-pointer"
+              >
+                {/* GlassSurface en fond */}
+                <GlassSurface
+                  {...GLASS_PROPS}
+                  style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }}
+                />
+
+                {/* Pill active sur la loupe */}
+                {!isSearchActive && activePillIdx === 3 && !isDragging && (
+                  <motion.div
+                    layoutId="active-pill"
+                    transition={PILL_SPRING}
+                    className="absolute inset-1.5 rounded-full border border-white/10 bg-white/5 shadow-[inset_0_1px_0_rgba(255,255,255,0.1),0_0_15px_rgba(29,185,84,0.1)]"
+                    style={{ willChange: "transform" }}
+                  />
+                )}
+
+                {/* Icône animée */}
+                <AnimatePresence mode="wait">
+                  {!isSearchActive ? (
+                    <motion.div
+                      key="icon-search"
+                      initial={{ opacity: 0, rotate: -45 }}
+                      animate={{ opacity: 1, rotate: 0 }}
+                      exit={{    opacity: 0, rotate: 45 }}
+                      transition={{ duration: 0.15 }}
+                      className="absolute z-10 pointer-events-none"
+                    >
+                      <Search
+                        className="w-6 h-6 transition-all duration-200"
+                        style={{
+                          color:  activePillIdx === 3 ? "#1db954" : "rgba(255,255,255,0.7)",
+                          filter: activePillIdx === 3 ? "drop-shadow(0 0 8px rgba(29,185,84,0.4))" : "none",
+                        }}
+                        strokeWidth={activePillIdx === 3 ? 2.5 : 2}
+                      />
+                    </motion.div>
+                  ) : (
+                    <motion.div
+                      key="icon-home"
+                      initial={{ opacity: 0, rotate: 45 }}
+                      animate={{ opacity: 1, rotate: 0 }}
+                      exit={{    opacity: 0, rotate: -45 }}
+                      transition={{ duration: 0.15 }}
+                      className="absolute z-10 pointer-events-none"
+                    >
+                      <Home className="w-6 h-6 text-white/70" strokeWidth={2} />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </motion.button>
+
+            </div>
+          </LayoutGroup>
         </motion.nav>
       )}
     </AnimatePresence>

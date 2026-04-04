@@ -4,6 +4,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Header } from "@/components/ui/Header";
 import { usePlaylists } from "@/context/PlaylistContext";
+import { useMusic } from "@/context/MusicContext"; 
 import { motion, AnimatePresence, useAnimation, useMotionValue, useTransform } from "framer-motion";
 
 const CATEGORIES = [
@@ -50,6 +51,10 @@ const TrackProgressBar = ({ audioRef, isPlaying }) => {
 
 export default function DiscoverPage() {
   const { playlists, createPlaylist, updatePlaylist } = usePlaylists();
+  
+  // 🟢 On détecte le mini-lecteur pour ajuster l'espace en bas de l'écran
+  const { currentTrack } = useMusic();
+  const hasMiniPlayer = currentTrack !== null;
 
   const [tracks,          setTracks]          = useState([]);
   const [currentIndex,    setCurrentIndex]    = useState(0);
@@ -224,7 +229,6 @@ export default function DiscoverPage() {
     }
 
     goToNext();
-    // 🟢 On remet le lecteur une fois l'action terminée
     window.dispatchEvent(new Event("showMiniPlayer"));
   };
 
@@ -232,17 +236,17 @@ export default function DiscoverPage() {
     setActiveModal("none"); 
     toggleNav(true);
     setNewPlaylistName(""); 
-    // 🟢 Si on annule, le lecteur revient !
     window.dispatchEvent(new Event("showMiniPlayer"));
   };
 
   const onDragEnd = (_, info) => {
-    dragX.set(0);
+    // 🟢 RÉTABLI : Crucial pour que la carte revienne au centre visuellement 
+    dragX.set(0); 
+
     if      (info.offset.x >  110) handleSwipeIntent("right");
     else if (info.offset.x < -110) handleSwipeIntent("left");
     else {
       controls.start({ x: 0, opacity: 1, rotate: 0 });
-      // 🟢 Si la carte revient au centre (pas de swipe validé), on réaffiche le lecteur
       window.dispatchEvent(new Event("showMiniPlayer"));
     }
   };
@@ -266,14 +270,164 @@ export default function DiscoverPage() {
   if (!isMounted) return null;
 
   return (
-    <div className="min-h-[100dvh] text-white flex flex-col relative pb-20 overflow-hidden bg-[#0e0e0e]">
+    // 🟢 RACINE FIGÉE : La page ne peut plus bouger du tout.
+    <div className="fixed inset-0 w-full h-[100dvh] text-white flex flex-col bg-[#0e0e0e] overflow-hidden">
       <Header />
+
+      <audio 
+        ref={audioRef} 
+        preload="auto"
+        onEnded={() => { 
+          setIsPlaying(false); 
+        }} 
+      />
+
+      {/* HAUT DE PAGE : Catégories et Titre */}
+      <div className="w-full pt-[calc(env(safe-area-inset-top)+5rem)] pb-2 flex flex-col items-center shrink-0">
+        <div className="w-full max-w-sm flex gap-2 overflow-x-auto px-4 pb-2 snap-x custom-scrollbar">
+          {CATEGORIES.map((cat) => (
+            <button key={cat.id}
+              onClick={() => handleCategoryChange(cat.id)}
+              className={`shrink-0 snap-start px-4 py-2 rounded-full text-sm font-bold transition-all border ${
+                activeCategory === cat.id
+                  ? "bg-[#1db954] text-black border-[#1db954]"
+                  : "bg-white/5 text-white/70 border-white/10 hover:bg-white/10"
+              }`}>{cat.label}</button>
+          ))}
+        </div>
+
+        <AnimatePresence>
+          {!hasSwiped && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              className="text-center overflow-hidden mt-2">
+              <h1 className="text-3xl font-black tracking-tight">Découverte</h1>
+              <p className="text-white/50 text-sm mt-1 mb-2">Glisse à droite pour garder, à gauche pour passer.</p>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
+      {/* 🟢 ZONE DE LA CARTE : Calcule automatiquement sa taille pour s'écraser proprement */}
+      <div className="flex-1 w-full max-w-sm mx-auto relative min-h-0 px-4 py-2 flex items-center justify-center">
+        
+        <motion.div layout className="relative w-full h-full max-h-[550px]">
+
+          {isLoading && (
+            <div className="absolute inset-0 w-full h-full rounded-3xl bg-white/5 animate-pulse border border-white/10 flex items-center justify-center flex-col gap-4">
+              <span className="text-4xl animate-bounce">🎧</span>
+              <span className="text-[#1db954] font-bold text-sm">Mixage en cours…</span>
+            </div>
+          )}
+
+          {!isLoading && currentIndex >= tracks.length && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-center space-y-4">
+              <span className="text-6xl">🎉</span>
+              <h2 className="text-2xl font-bold">Tu as tout vu !</h2>
+              <button onClick={() => fetchDiscoveryTracks(activeCategory)}
+                className="mt-4 bg-[#1db954] text-black px-6 py-3 rounded-full font-bold hover:scale-105 transition-transform">
+                Recharger des sons
+              </button>
+            </div>
+          )}
+
+          {!isLoading && activeTrack && currentIndex < tracks.length && (
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={activeTrack.id}
+                drag="x"
+                dragConstraints={{ left: 0, right: 0 }}
+                dragElastic={0.18}
+                style={{ x: dragX }}
+                onDragStart={() => window.dispatchEvent(new Event("hideMiniPlayer"))}
+                onDrag={(_, info) => dragX.set(info.offset.x)}
+                onDragEnd={onDragEnd}
+                animate={controls}
+                whileDrag={{ scale: 1.03, cursor: "grabbing" }}
+                className="absolute inset-0 w-full h-full rounded-3xl shadow-2xl overflow-hidden cursor-grab touch-none border border-white/10 bg-[#121212] flex flex-col z-10"
+                >
+
+                <div className="absolute inset-0 opacity-40 blur-xl scale-110 pointer-events-none"
+                  style={{ backgroundImage: `url(${activeTrack.image})`, backgroundSize: "cover", backgroundPosition: "center" }} />
+
+                <motion.div className="absolute inset-0 pointer-events-none z-20 rounded-3xl"
+                  style={{ opacity: likeOpacity, background: "linear-gradient(135deg, rgba(29,185,84,0.35) 0%, transparent 60%)" }} />
+                <motion.div className="absolute inset-0 pointer-events-none z-20 rounded-3xl"
+                  style={{ opacity: skipOpacity, background: "linear-gradient(225deg, rgba(239,68,68,0.35) 0%, transparent 60%)" }} />
+
+                <motion.div className="absolute top-6 left-5 z-30 bg-[#1db954] text-black font-black text-lg px-4 py-1.5 rounded-xl rotate-[-12deg] border-2 border-black/20"
+                  style={{ opacity: likeOpacity }}>SAVE ♥</motion.div>
+                <motion.div className="absolute top-6 right-5 z-30 bg-red-500 text-white font-black text-lg px-4 py-1.5 rounded-xl rotate-[12deg] border-2 border-black/20"
+                  style={{ opacity: skipOpacity }}>SKIP ✕</motion.div>
+
+                <div className="absolute inset-0 flex flex-col p-4 sm:p-6 z-10 bg-gradient-to-b from-transparent via-black/40 to-black/95">
+                  
+                  {/* 🟢 Image qui se réduit proprement si l'écran manque d'espace */}
+                  <div className="flex-1 min-h-0 flex items-center justify-center py-2 overflow-hidden">
+                    <img src={activeTrack.image} alt={activeTrack.title}
+                      loading="lazy" decoding="async"
+                      className="h-full w-auto aspect-square object-cover rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] pointer-events-none" />
+                  </div>
+
+                  <div className="shrink-0 pb-3">
+                    <div className="flex items-center gap-2 mb-3">
+                      <TrackProgressBar audioRef={audioRef} isPlaying={isPlaying} />
+                      <span className="text-[10px] font-bold text-white/40 tabular-nums shrink-0">{activeTrack.duration}</span>
+                    </div>
+                    <h2 className="text-2xl sm:text-3xl font-black text-white leading-tight mb-1 truncate pointer-events-none">
+                      {activeTrack.title}
+                    </h2>
+                    <p className="text-base sm:text-lg text-white/70 truncate pointer-events-none">
+                      {activeTrack.artist}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-3 border-t border-white/10 shrink-0 pb-2">
+                    <button onClick={() => handleSwipeIntent("left")}
+                      className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-red-500 hover:bg-red-500/10 hover:border-red-500/50 hover:scale-110 transition-all shadow-lg relative z-20 pointer-events-auto">
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+
+                    <div className="flex items-end gap-[3px] h-5">
+                      {isPlaying
+                        ? [0,1,2,3].map((i) => (
+                          <span key={i} className="w-1 bg-[#1db954] rounded-sm block"
+                            style={{ 
+                              height: "100%", 
+                              animation: `barBounce 0.8s ease-in-out ${i * 0.15}s infinite alternate` 
+                            }} 
+                          />
+                        ))
+                        : <span className="text-white/20 text-lg">♪</span>
+                      }
+                    </div>
+
+                    <button onClick={() => handleSwipeIntent("right")}
+                      className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-[#1db954] hover:bg-[#1db954]/10 hover:border-[#1db954]/50 hover:scale-110 transition-all shadow-lg relative z-20 pointer-events-auto">
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            </AnimatePresence>
+          )}
+        </motion.div>
+      </div>
+
+      {/* 🟢 LE COUSSIN MAGIQUE : Il pousse la carte vers le haut de 160px si le lecteur joue, 100px sinon */}
+      <div className={`w-full shrink-0 transition-all duration-300 ${hasMiniPlayer ? 'h-[160px]' : 'h-[100px]'}`} />
+
+      {/* ======================================================= */}
+      {/* 🟢 ZONES DE MODALES SÉCURISÉES (Fin du DOM = Au-dessus) */}
+      {/* ======================================================= */}
 
       <AnimatePresence>
         {isAudioBlocked && !isLoading && activeModal === "none" && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             onClick={unlockAudio}
-            className="fixed inset-0 z-[999] flex flex-col items-center justify-center bg-black/80 backdrop-blur-md cursor-pointer">
+            className="absolute inset-0 z-[9999] flex flex-col items-center justify-center bg-black/80 backdrop-blur-md cursor-pointer">
             <span className="text-6xl mb-4 animate-bounce">🔇</span>
             <h3 className="text-2xl font-black text-white text-center px-4">Son bloqué</h3>
             <p className="text-white/70 mt-2 text-center px-6">Touche n'importe où pour activer la musique</p>
@@ -284,18 +438,10 @@ export default function DiscoverPage() {
         )}
       </AnimatePresence>
 
-      <audio 
-        ref={audioRef} 
-        preload="auto"
-        onEnded={() => { 
-          setIsPlaying(false); 
-        }} 
-      />
-
       <AnimatePresence>
         {activeModal === "right" && (
           <motion.div initial={{ opacity: 0, y: 100 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 100 }}
-            className="fixed inset-0 z-[1000] flex flex-col justify-end bg-black/60 backdrop-blur-sm">
+            className="absolute inset-0 z-[9999] flex flex-col justify-end bg-black/60 backdrop-blur-sm pointer-events-auto">
             <div className="bg-[#181818] w-full rounded-t-3xl p-6 pb-12 shadow-2xl border-t border-white/10 max-h-[80vh] flex flex-col">
               <div className="flex justify-between items-center mb-6 shrink-0">
                 <h3 className="text-2xl font-black">Ajouter à…</h3>
@@ -338,7 +484,7 @@ export default function DiscoverPage() {
       <AnimatePresence>
         {activeModal === "left" && (
           <motion.div initial={{ opacity: 0, y: 100 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 100 }}
-            className="fixed inset-0 z-[1000] flex flex-col justify-end bg-black/60 backdrop-blur-sm">
+            className="absolute inset-0 z-[9999] flex flex-col justify-end bg-black/60 backdrop-blur-sm pointer-events-auto">
             <div className="bg-[#181818] w-full rounded-t-3xl p-6 pb-12 shadow-2xl border-t border-white/10">
               <div className="flex justify-between items-center mb-6">
                 <h3 className="text-2xl font-black">Que faire ?</h3>
@@ -360,135 +506,6 @@ export default function DiscoverPage() {
           </motion.div>
         )}
       </AnimatePresence>
-
-      <div className="flex-1 flex flex-col items-center justify-center px-4 pt-24 pb-6 overflow-hidden relative">
-
-        <div className="w-full max-w-sm flex gap-2 overflow-x-auto pb-4 pt-2 z-10 shrink-0 snap-x custom-scrollbar">
-          {CATEGORIES.map((cat) => (
-            <button key={cat.id}
-              onClick={() => handleCategoryChange(cat.id)}
-              className={`shrink-0 snap-start px-4 py-2 rounded-full text-sm font-bold transition-all border ${
-                activeCategory === cat.id
-                  ? "bg-[#1db954] text-black border-[#1db954]"
-                  : "bg-white/5 text-white/70 border-white/10 hover:bg-white/10"
-              }`}>{cat.label}</button>
-          ))}
-        </div>
-
-        <AnimatePresence>
-          {!hasSwiped && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: "auto", marginBottom: 24 }}
-              exit={{ opacity: 0, height: 0, marginBottom: 0 }}
-              className="text-center z-10 shrink-0 overflow-hidden">
-              <h1 className="text-3xl font-black tracking-tight mt-4">Découverte</h1>
-              <p className="text-white/50 text-sm mt-1">Glisse à droite pour garder, à gauche pour passer.</p>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        <motion.div layout className="relative w-full max-w-sm flex-1 max-h-[550px] flex items-center justify-center">
-
-          {isLoading && (
-            <div className="w-full h-full rounded-3xl bg-white/5 animate-pulse border border-white/10 flex items-center justify-center flex-col gap-4">
-              <span className="text-4xl animate-bounce">🎧</span>
-              <span className="text-[#1db954] font-bold text-sm">Mixage en cours…</span>
-            </div>
-          )}
-
-          {!isLoading && currentIndex >= tracks.length && (
-            <div className="text-center space-y-4 z-10">
-              <span className="text-6xl">🎉</span>
-              <h2 className="text-2xl font-bold">Tu as tout vu !</h2>
-              <button onClick={() => fetchDiscoveryTracks(activeCategory)}
-                className="mt-4 bg-[#1db954] text-black px-6 py-3 rounded-full font-bold hover:scale-105 transition-transform">
-                Recharger des sons
-              </button>
-            </div>
-          )}
-
-          {!isLoading && activeTrack && currentIndex < tracks.length && (
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={activeTrack.id}
-                drag="x"
-                dragConstraints={{ left: 0, right: 0 }}
-                dragElastic={0.18}
-                style={{ x: dragX }}
-                // 🟢 Dès qu'on touche la carte, on cache le lecteur !
-                onDragStart={() => window.dispatchEvent(new Event("hideMiniPlayer"))}
-                onDrag={(_, info) => dragX.set(info.offset.x)}
-                onDragEnd={onDragEnd}
-                animate={controls}
-                whileDrag={{ scale: 1.03, cursor: "grabbing" }}
-                className="absolute inset-0 w-full h-full rounded-3xl shadow-2xl overflow-hidden cursor-grab touch-none border border-white/10 bg-[#121212] flex flex-col"
-                style={{ touchAction: "none" }}>
-
-                <div className="absolute inset-0 opacity-40 blur-xl scale-110 pointer-events-none"
-                  style={{ backgroundImage: `url(${activeTrack.image})`, backgroundSize: "cover", backgroundPosition: "center" }} />
-
-                <motion.div className="absolute inset-0 pointer-events-none z-20 rounded-3xl"
-                  style={{ opacity: likeOpacity, background: "linear-gradient(135deg, rgba(29,185,84,0.35) 0%, transparent 60%)" }} />
-                <motion.div className="absolute inset-0 pointer-events-none z-20 rounded-3xl"
-                  style={{ opacity: skipOpacity, background: "linear-gradient(225deg, rgba(239,68,68,0.35) 0%, transparent 60%)" }} />
-
-                <motion.div className="absolute top-6 left-5 z-30 bg-[#1db954] text-black font-black text-lg px-4 py-1.5 rounded-xl rotate-[-12deg] border-2 border-black/20"
-                  style={{ opacity: likeOpacity }}>SAVE ♥</motion.div>
-                <motion.div className="absolute top-6 right-5 z-30 bg-red-500 text-white font-black text-lg px-4 py-1.5 rounded-xl rotate-[12deg] border-2 border-black/20"
-                  style={{ opacity: skipOpacity }}>SKIP ✕</motion.div>
-
-                <div className="absolute inset-0 flex flex-col p-4 sm:p-6 z-10 bg-gradient-to-b from-transparent via-black/40 to-black/95">
-                  <div className="flex-1 flex items-center justify-center py-2 min-h-0">
-                    <img src={activeTrack.image} alt={activeTrack.title}
-                      loading="lazy" decoding="async"
-                      className="h-full max-h-[240px] aspect-square object-cover rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] pointer-events-none" />
-                  </div>
-
-                  <div className="shrink-0 pb-3">
-                    <div className="flex items-center gap-2 mb-3">
-                      <TrackProgressBar audioRef={audioRef} isPlaying={isPlaying} />
-                      <span className="text-[10px] font-bold text-white/40 tabular-nums shrink-0">{activeTrack.duration}</span>
-                    </div>
-                    <h2 className="text-2xl sm:text-3xl font-black text-white leading-tight mb-1 truncate pointer-events-none">
-                      {activeTrack.title}
-                    </h2>
-                    <p className="text-base sm:text-lg text-white/70 truncate pointer-events-none">
-                      {activeTrack.artist}
-                    </p>
-                  </div>
-
-                  <div className="flex items-center justify-between pt-3 border-t border-white/10 shrink-0 pb-2">
-                    <button onClick={() => handleSwipeIntent("left")}
-                      className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-red-500 hover:bg-red-500/10 hover:border-red-500/50 hover:scale-110 transition-all shadow-lg relative z-20">
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                    </button>
-
-                    <div className="flex items-end gap-[3px] h-5">
-                      {isPlaying
-                        ? [0,1,2,3].map((i) => (
-                          <span key={i} className="w-1 bg-[#1db954] rounded-sm block"
-                            style={{ 
-                              height: "100%", 
-                              animation: `barBounce 0.8s ease-in-out ${i * 0.15}s infinite alternate` 
-                            }} 
-                          />
-                        ))
-                        : <span className="text-white/20 text-lg">♪</span>
-                      }
-                    </div>
-
-                    <button onClick={() => handleSwipeIntent("right")}
-                      className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-[#1db954] hover:bg-[#1db954]/10 hover:border-[#1db954]/50 hover:scale-110 transition-all shadow-lg relative z-20">
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
-                    </button>
-                  </div>
-                </div>
-              </motion.div>
-            </AnimatePresence>
-          )}
-        </motion.div>
-      </div>
 
       <style dangerouslySetInnerHTML={{__html: `
         @keyframes barBounce {

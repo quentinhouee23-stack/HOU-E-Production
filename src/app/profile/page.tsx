@@ -33,22 +33,45 @@ export default function ProfilePage() {
   const [pendingRequests, setPendingRequests] = useState([]);
   const [sentRequests, setSentRequests] = useState([]);
 
-  const toggleNav = (show: boolean) => {
+  // 🟢 NOUVEAU : État pour gérer l'affichage de la modale de déconnexion
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+
+  const toggleUI = (show: boolean) => {
     if (show) {
       window.dispatchEvent(new Event("showNav"));
+      window.dispatchEvent(new Event("showMiniPlayer"));
     } else {
       window.dispatchEvent(new Event("hideNav"));
+      window.dispatchEvent(new Event("hideMiniPlayer"));
     }
   };
 
   useEffect(() => {
-    if (showFriends) {
+    if (showFriends || showLogoutConfirm) {
       document.body.style.overflow = 'hidden';
     } else {
       document.body.style.overflow = '';
     }
     return () => { document.body.style.overflow = ''; };
-  }, [showFriends]);
+  }, [showFriends, showLogoutConfirm]);
+
+  const getStartOfWeek = () => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    const day = d.getDay();
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+    d.setDate(diff);
+    return d.toISOString().split('T')[0];
+  };
+
+  const safeJSONParse = (key: string, fallback: any) => {
+    try {
+      const item = localStorage.getItem(key);
+      return item ? JSON.parse(item) : fallback;
+    } catch (e) {
+      return fallback;
+    }
+  };
 
   const loadLocalStats = () => {
     const emptyDaily = [
@@ -56,24 +79,40 @@ export default function ProfilePage() {
       { day: "Jeu", minutes: 0 }, { day: "Ven", minutes: 0 }, { day: "Sam", minutes: 0 }, { day: "Dim", minutes: 0 },
     ];
     
-    try {
-      const currentStats = JSON.parse(localStorage.getItem("dailyStats"));
-      setDailyStats(Array.isArray(currentStats) && currentStats.length === 7 ? currentStats : emptyDaily);
-    } catch { setDailyStats(emptyDaily); }
+    const currentStartOfWeek = getStartOfWeek();
+    const savedStartOfWeek = localStorage.getItem("startOfWeek");
 
-    try {
-      const pastStats = JSON.parse(localStorage.getItem("lastWeekStats"));
-      setLastWeekStats(Array.isArray(pastStats) && pastStats.length === 7 ? pastStats : emptyDaily);
-    } catch { setLastWeekStats(emptyDaily); }
+    if (savedStartOfWeek && savedStartOfWeek !== currentStartOfWeek) {
+      const currentDaily = safeJSONParse("dailyStats", emptyDaily);
+      const currentTracks = safeJSONParse("weeklyTopTracks", []);
 
-    setTopTracks(JSON.parse(localStorage.getItem("weeklyTopTracks")) || []);
-    setLastWeekTracks(JSON.parse(localStorage.getItem("lastWeekTopTracks")) || []);
+      localStorage.setItem("lastWeekStats", JSON.stringify(currentDaily));
+      localStorage.setItem("lastWeekTopTracks", JSON.stringify(currentTracks));
+
+      localStorage.setItem("dailyStats", JSON.stringify(emptyDaily));
+      localStorage.setItem("weeklyTopTracks", JSON.stringify([]));
+
+      localStorage.setItem("startOfWeek", currentStartOfWeek);
+    } else if (!savedStartOfWeek) {
+      localStorage.setItem("startOfWeek", currentStartOfWeek);
+    }
+
+    const currentStats = safeJSONParse("dailyStats", emptyDaily);
+    setDailyStats(Array.isArray(currentStats) && currentStats.length === 7 ? currentStats : emptyDaily);
+
+    const pastStats = safeJSONParse("lastWeekStats", emptyDaily);
+    setLastWeekStats(Array.isArray(pastStats) && pastStats.length === 7 ? pastStats : emptyDaily);
+
+    setTopTracks(safeJSONParse("weeklyTopTracks", []));
+    setLastWeekTracks(safeJSONParse("lastWeekTopTracks", []));
   };
 
   useEffect(() => {
     if (!user) {
-      router.push("/login");
-      return;
+      const timer = setTimeout(() => {
+        router.push("/login");
+      }, 1000);
+      return () => clearTimeout(timer);
     }
 
     const loadProfile = async () => {
@@ -176,21 +215,42 @@ export default function ProfilePage() {
   };
 
   const saveName = async () => {
-    if (tempName.trim().length > 0) {
-      setUsername(tempName.trim());
-      await supabase.auth.updateUser({ data: { username: tempName.trim() } });
-      await supabase.from('profiles').upsert({ id: user.id, username: tempName.trim() });
+    const newName = tempName.trim();
+    setIsEditingName(false);
+    
+    if (newName.length > 0 && newName !== username) {
+      setUsername(newName);
+      await supabase.auth.updateUser({ data: { username: newName } });
+      await supabase.from('profiles').upsert({ id: user.id, username: newName });
       window.dispatchEvent(new Event("profileUpdated"));
     }
-    setIsEditingName(false);
   };
 
-  const handleSignOut = async () => {
+  const confirmSignOut = async () => {
+    setShowLogoutConfirm(false);
     await signOut();
     router.push("/login");
   };
 
-  if (!user) return null;
+  const openFriendsModal = () => {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    setShowFriends(true);
+    fetchFriends();
+    toggleUI(false);
+  };
+
+  const closeFriendsModal = () => {
+    setShowFriends(false);
+    toggleUI(true);
+  };
+
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-[#121212] flex items-center justify-center">
+        <div className="w-10 h-10 border-4 border-[#1db954] border-t-transparent rounded-full animate-spin"></div>
+      </div>
+    );
+  }
 
   const displayDaily = statsTimeframe === "current" ? dailyStats : lastWeekStats;
   const displayTopTracks = statsTimeframe === "current" ? topTracks : lastWeekTracks;
@@ -198,10 +258,10 @@ export default function ProfilePage() {
   const todayArrayIndex = (new Date().getDay() + 6) % 7;
 
   return (
-    <div className="pb-32 min-h-screen text-white flex flex-col relative overflow-x-hidden bg-[#121212]">
+    <div className="pb-32 min-h-screen text-white flex flex-col relative bg-[#121212]">
       <Header />
 
-      <div className="px-4 pt-32 pb-8 max-w-5xl mx-auto space-y-12 w-full flex-1 relative">
+      <div className="px-4 pt-[calc(env(safe-area-inset-top)+8rem)] pb-8 max-w-5xl mx-auto space-y-12 w-full flex-1 relative">
         
         <section className="flex flex-col items-center text-center space-y-4 pt-4">
           
@@ -231,7 +291,7 @@ export default function ProfilePage() {
           
           <div className="flex gap-3 pt-2">
             <button 
-              onClick={() => { setShowFriends(true); fetchFriends(); toggleNav(false); }} 
+              onClick={openFriendsModal} 
               className="bg-white/10 hover:bg-white/20 transition-colors px-6 py-2 rounded-full font-bold flex items-center gap-2 relative"
             >
               <Users className="w-4 h-4" /> Amis
@@ -241,8 +301,14 @@ export default function ProfilePage() {
                 </span>
               )}
             </button>
-            <button onClick={handleSignOut} className="bg-red-500/10 hover:bg-red-500/20 text-red-500 transition-colors px-6 py-2 rounded-full font-bold flex items-center gap-2">
-              <LogOut className="w-4 h-4" />
+
+            {/* 🟢 Le bouton n'a plus de texte et ouvre la belle fenêtre modale au lieu de l'alerte windows */}
+            <button 
+              onClick={() => { setShowLogoutConfirm(true); toggleUI(false); }} 
+              title="Se déconnecter"
+              className="w-10 h-10 bg-red-500/10 hover:bg-red-500/20 text-red-500 transition-colors rounded-full flex items-center justify-center shrink-0"
+            >
+              <LogOut className="w-5 h-5 ml-1" />
             </button>
           </div>
         </section>
@@ -269,7 +335,7 @@ export default function ProfilePage() {
             </div>
             
             <div className="flex items-end justify-between h-48 gap-2 mb-4 pt-4">
-              {displayDaily.map((stat, i) => {
+              {displayDaily?.map((stat, i) => {
                 const safeMinutes = Number(stat.minutes) || 0;
                 const heightPercent = Math.max((safeMinutes / maxMinutes) * 100, 5);
                 const isToday = statsTimeframe === "current" && i === todayArrayIndex; 
@@ -299,8 +365,8 @@ export default function ProfilePage() {
               <h2 className="text-xl font-bold flex items-center gap-3"><TrendingUp className="w-6 h-6 text-[#1db954]" /> Top 10</h2>
             </div>
             <div className="space-y-2">
-              {displayTopTracks.length > 0 ? displayTopTracks.map((track, i) => (
-                <div key={track.id} className="flex items-center p-3 bg-white/5 hover:bg-white/10 border border-white/5 rounded-2xl transition-all">
+              {displayTopTracks?.length > 0 ? displayTopTracks.map((track, i) => (
+                <div key={track.id || i} className="flex items-center p-3 bg-white/5 hover:bg-white/10 border border-white/5 rounded-2xl transition-all">
                   <div className="w-8 shrink-0 text-center font-black text-white/30">{i + 1}</div>
                   <img src={track.image} alt={track.title} className="w-14 h-14 rounded-xl object-cover shadow-md mx-3" />
                   <div className="flex-1 overflow-hidden">
@@ -331,144 +397,196 @@ export default function ProfilePage() {
       </div>
 
       <AnimatePresence>
+        {/* MODALE D'AMIS */}
         {showFriends && (
-          <div 
-            className="fixed inset-0 z-[9999] flex flex-col justify-end sm:items-center sm:justify-center bg-black/80 backdrop-blur-md overflow-hidden h-[100dvh]"
-            onClick={() => { setShowFriends(false); toggleNav(true); }}
-          >
-            <motion.div 
-              initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} transition={{ type: "spring", damping: 25, stiffness: 300 }}
-              onClick={(e) => e.stopPropagation()}
-              className="w-full sm:max-w-md bg-[#1c1c1e] rounded-t-[32px] sm:rounded-[32px] flex flex-col border-t sm:border border-white/10 shadow-2xl h-[85dvh] sm:h-[700px]"
-            >
-              <div className="flex items-center justify-between p-6 border-b border-white/5 shrink-0">
-                <h2 className="text-2xl font-black text-white">Social</h2>
-                <button onClick={() => { setShowFriends(false); toggleNav(true); }} className="w-10 h-10 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center transition-colors">
-                  <X className="w-5 h-5 text-white" />
-                </button>
-              </div>
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={closeFriendsModal}
+              className="fixed inset-0 z-[9998] bg-black/80 backdrop-blur-md"
+            />
 
-              <div className="flex border-b border-white/5 shrink-0">
-                <button 
-                  onClick={() => setActiveTab("friends")} 
-                  className={`flex-1 py-4 text-sm font-bold transition-colors ${activeTab === 'friends' ? 'text-[#1db954] border-b-2 border-[#1db954]' : 'text-white/50 hover:text-white'}`}
-                >
-                  Mes Amis ({myFriends.length})
-                </button>
-                <button 
-                  onClick={() => setActiveTab("search")} 
-                  className={`flex-1 py-4 text-sm font-bold transition-colors ${activeTab === 'search' ? 'text-[#1db954] border-b-2 border-[#1db954]' : 'text-white/50 hover:text-white'}`}
-                >
-                  Ajouter
-                </button>
-              </div>
+            <div className="fixed inset-x-0 bottom-0 top-12 z-[9999] pointer-events-none flex flex-col justify-end sm:justify-center sm:items-center">
+              <motion.div
+                initial={{ y: "100%" }}
+                animate={{ y: 0 }}
+                exit={{ y: "100%" }}
+                transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                onClick={(e) => e.stopPropagation()}
+                className="w-full sm:max-w-md bg-[#1c1c1e] rounded-t-[32px] sm:rounded-[32px] flex flex-col border-t sm:border border-white/10 shadow-2xl pointer-events-auto h-[85%] sm:h-[700px]"
+              >
+                {/* Header */}
+                <div className="flex items-center justify-between p-6 border-b border-white/5 shrink-0">
+                  <h2 className="text-2xl font-black text-white">Social</h2>
+                  <button
+                    onClick={closeFriendsModal}
+                    className="w-10 h-10 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center transition-colors"
+                  >
+                    <X className="w-5 h-5 text-white" />
+                  </button>
+                </div>
 
-              <div className="flex-1 overflow-y-auto p-4 pb-12 custom-scrollbar overscroll-contain">
-                
-                {activeTab === "search" && (
-                  <div className="space-y-4">
-                    <div className="relative">
-                      <SearchIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/40" />
-                      <input 
-                        type="text" placeholder="Chercher un pseudo..." value={friendSearch} onChange={(e) => setFriendSearch(e.target.value)}
-                        className="w-full bg-white/5 border border-white/10 rounded-2xl py-3 pl-12 pr-4 text-white outline-none focus:border-[#1db954] transition-colors"
-                      />
-                    </div>
+                {/* Tabs */}
+                <div className="flex border-b border-white/5 shrink-0">
+                  <button
+                    onClick={() => setActiveTab("friends")}
+                    className={`flex-1 py-4 text-sm font-bold transition-colors ${activeTab === 'friends' ? 'text-[#1db954] border-b-2 border-[#1db954]' : 'text-white/50 hover:text-white'}`}
+                  >
+                    Mes Amis ({myFriends.length})
+                  </button>
+                  <button
+                    onClick={() => setActiveTab("search")}
+                    className={`flex-1 py-4 text-sm font-bold transition-colors ${activeTab === 'search' ? 'text-[#1db954] border-b-2 border-[#1db954]' : 'text-white/50 hover:text-white'}`}
+                  >
+                    Ajouter
+                  </button>
+                </div>
 
-                    <div className="space-y-2 mt-4">
-                      {searchResults.map(result => {
-                        const isFriend = myFriends.some(f => f.id === result.id);
-                        const hasSent = sentRequests.some(f => f.id === result.id);
-                        const hasPending = pendingRequests.some(f => f.id === result.id);
-
-                        return (
-                          <div key={result.id} className="flex items-center gap-3 p-3 bg-white/5 rounded-2xl border border-white/5">
-                            <div className="w-10 h-10 rounded-full bg-[#1db954]/20 flex items-center justify-center text-[#1db954] font-bold shrink-0 uppercase">
-                               {result.username.charAt(0)}
-                            </div>
-                            <span className="flex-1 font-bold text-white truncate">{result.username}</span>
-                            
-                            {isFriend ? (
-                              <span className="text-xs text-white/50 flex items-center gap-1"><UserCheck className="w-4 h-4"/> Amis</span>
-                            ) : hasSent ? (
-                              <span className="text-xs text-[#1db954] bg-[#1db954]/10 px-3 py-1.5 rounded-full font-bold">Envoyé</span>
-                            ) : hasPending ? (
-                              <button onClick={() => acceptFriendRequest(pendingRequests.find(p => p.id === result.id).relId)} className="bg-[#1db954] text-black text-xs font-bold px-4 py-2 rounded-full">Accepter</button>
-                            ) : (
-                              <button onClick={() => sendFriendRequest(result.id)} className="bg-white/10 hover:bg-white/20 transition-colors text-white text-xs font-bold px-4 py-2 rounded-full flex items-center gap-1">
-                                <UserPlus className="w-4 h-4" /> Ajouter
-                              </button>
-                            )}
-                          </div>
-                        );
-                      })}
-                      {friendSearch.length >= 2 && searchResults.length === 0 && (
-                        <p className="text-center text-white/50 text-sm py-4">Aucun utilisateur trouvé.</p>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {activeTab === "friends" && (
-                  <div className="space-y-6">
-                    {pendingRequests.length > 0 && (
-                      <div>
-                        <h3 className="text-xs font-bold uppercase tracking-widest text-white/40 mb-3">Demandes reçues ({pendingRequests.length})</h3>
-                        <div className="space-y-2">
-                          {pendingRequests.map(req => (
-                            <div key={req.id} className="flex items-center gap-3 p-3 bg-[#1db954]/10 rounded-2xl border border-[#1db954]/20">
-                              <div className="w-10 h-10 rounded-full bg-[#1db954]/30 flex items-center justify-center text-[#1db954] font-bold shrink-0 uppercase">
-                                 {req.username.charAt(0)}
-                              </div>
-                              <span className="flex-1 font-bold text-white truncate">{req.username}</span>
-                              <button onClick={() => acceptFriendRequest(req.relId)} className="bg-[#1db954] text-black w-8 h-8 flex items-center justify-center rounded-full hover:scale-105 transition-transform">
-                                <Check className="w-4 h-4" />
-                              </button>
-                              <button onClick={() => removeFriend(req.relId)} className="bg-red-500/20 text-red-500 w-8 h-8 flex items-center justify-center rounded-full hover:bg-red-500/40 transition-colors">
-                                <X className="w-4 h-4" />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
+                {/* Scrollable content */}
+                <div className="flex-1 overflow-y-auto p-4 pb-12 custom-scrollbar overscroll-contain">
+                  {activeTab === "search" && (
+                    <div className="space-y-4">
+                      <div className="relative">
+                        <SearchIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/40" />
+                        <input
+                          type="text"
+                          placeholder="Chercher un pseudo..."
+                          value={friendSearch}
+                          onChange={(e) => setFriendSearch(e.target.value)}
+                          className="w-full bg-white/5 border border-white/10 rounded-2xl py-3 pl-12 pr-4 text-white outline-none focus:border-[#1db954] transition-colors"
+                        />
                       </div>
-                    )}
 
-                    <div>
-                      {pendingRequests.length > 0 && <h3 className="text-xs font-bold uppercase tracking-widest text-white/40 mb-3">Ma liste</h3>}
-                      
-                      {myFriends.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center py-10 text-center opacity-50 space-y-4">
-                          <Users className="w-12 h-12 text-[#1db954]" />
-                          <div>
-                            <p className="font-bold text-lg text-white">Aucun ami ajouté</p>
-                            <p className="text-sm">Va dans l'onglet "Ajouter" pour trouver ta famille.</p>
+                      <div className="space-y-2 mt-4">
+                        {searchResults?.map(result => {
+                          const isFriend = myFriends.some(f => f.id === result.id);
+                          const hasSent = sentRequests.some(f => f.id === result.id);
+                          const hasPending = pendingRequests.some(f => f.id === result.id);
+
+                          return (
+                            <div key={result.id} className="flex items-center gap-3 p-3 bg-white/5 rounded-2xl border border-white/5">
+                              <div className="w-10 h-10 rounded-full bg-[#1db954]/20 flex items-center justify-center text-[#1db954] font-bold shrink-0 uppercase">
+                                 {result.username.charAt(0)}
+                              </div>
+                              <span className="flex-1 font-bold text-white truncate">{result.username}</span>
+                              
+                              {isFriend ? (
+                                <span className="text-xs text-white/50 flex items-center gap-1"><UserCheck className="w-4 h-4"/> Amis</span>
+                              ) : hasSent ? (
+                                <span className="text-xs text-[#1db954] bg-[#1db954]/10 px-3 py-1.5 rounded-full font-bold">Envoyé</span>
+                              ) : hasPending ? (
+                                <button onClick={() => acceptFriendRequest(pendingRequests.find(p => p.id === result.id).relId)} className="bg-[#1db954] text-black text-xs font-bold px-4 py-2 rounded-full">Accepter</button>
+                              ) : (
+                                <button onClick={() => sendFriendRequest(result.id)} className="bg-white/10 hover:bg-white/20 transition-colors text-white text-xs font-bold px-4 py-2 rounded-full flex items-center gap-1">
+                                  <UserPlus className="w-4 h-4" /> Ajouter
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
+                        {friendSearch.length >= 2 && searchResults.length === 0 && (
+                          <p className="text-center text-white/50 text-sm py-4">Aucun utilisateur trouvé.</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {activeTab === "friends" && (
+                    <div className="space-y-6">
+                      {pendingRequests.length > 0 && (
+                        <div>
+                          <h3 className="text-xs font-bold uppercase tracking-widest text-white/40 mb-3">Demandes reçues ({pendingRequests.length})</h3>
+                          <div className="space-y-2">
+                            {pendingRequests.map(req => (
+                              <div key={req.id} className="flex items-center gap-3 p-3 bg-[#1db954]/10 rounded-2xl border border-[#1db954]/20">
+                                <div className="w-10 h-10 rounded-full bg-[#1db954]/30 flex items-center justify-center text-[#1db954] font-bold shrink-0 uppercase">
+                                   {req.username.charAt(0)}
+                                </div>
+                                <span className="flex-1 font-bold text-white truncate">{req.username}</span>
+                                <button onClick={() => acceptFriendRequest(req.relId)} className="bg-[#1db954] text-black w-8 h-8 flex items-center justify-center rounded-full hover:scale-105 transition-transform">
+                                  <Check className="w-4 h-4" />
+                                </button>
+                                <button onClick={() => removeFriend(req.relId)} className="bg-red-500/20 text-red-500 w-8 h-8 flex items-center justify-center rounded-full hover:bg-red-500/40 transition-colors">
+                                  <X className="w-4 h-4" />
+                                </button>
+                              </div>
+                            ))}
                           </div>
                         </div>
-                      ) : (
-                        <div className="space-y-2">
-                          {myFriends.map(friend => (
-                            <div key={friend.id} className="flex items-center gap-3 p-3 bg-white/5 rounded-2xl border border-white/5 group">
-                              <div className="w-12 h-12 rounded-full bg-[#1db954]/20 flex items-center justify-center text-[#1db954] font-bold text-xl shrink-0 uppercase">
-                                  {friend.username.charAt(0)}
-                              </div>
-                              <span className="flex-1 font-bold text-white truncate">{friend.username}</span>
-                              <button 
-                                onClick={() => { if(window.confirm(`Supprimer ${friend.username} ?`)) removeFriend(friend.relId); }} 
-                                className="opacity-0 group-hover:opacity-100 bg-red-500/20 text-red-500 w-8 h-8 flex items-center justify-center rounded-full hover:bg-red-500/40 transition-all"
-                                title="Supprimer"
-                              >
-                                <X className="w-4 h-4" />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
                       )}
+
+                      <div>
+                        {pendingRequests.length > 0 && <h3 className="text-xs font-bold uppercase tracking-widest text-white/40 mb-3">Ma liste</h3>}
+                        
+                        {myFriends.length === 0 ? (
+                          <div className="flex flex-col items-center justify-center py-10 text-center opacity-50 space-y-4">
+                            <Users className="w-12 h-12 text-[#1db954]" />
+                            <div>
+                              <p className="font-bold text-lg text-white">Aucun ami ajouté</p>
+                              <p className="text-sm">Va dans l'onglet "Ajouter" pour trouver ta famille.</p>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            {myFriends.map(friend => (
+                              <div key={friend.id} className="flex items-center gap-3 p-3 bg-white/5 rounded-2xl border border-white/5 group">
+                                <div className="w-12 h-12 rounded-full bg-[#1db954]/20 flex items-center justify-center text-[#1db954] font-bold text-xl shrink-0 uppercase">
+                                    {friend.username.charAt(0)}
+                                </div>
+                                <span className="flex-1 font-bold text-white truncate">{friend.username}</span>
+                                <button 
+                                  onClick={() => { if(window.confirm(`Supprimer ${friend.username} ?`)) removeFriend(friend.relId); }} 
+                                  className="opacity-0 group-hover:opacity-100 bg-red-500/20 text-red-500 w-8 h-8 flex items-center justify-center rounded-full hover:bg-red-500/40 transition-all"
+                                  title="Supprimer"
+                                >
+                                  <X className="w-4 h-4" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
                     </div>
+                  )}
+                </div>
 
-                  </div>
-                )}
+              </motion.div>
+            </div>
+          </>
+        )}
+
+        {/* 🟢 NOUVEAU : MODALE DE DÉCONNEXION STYLÉE */}
+        {showLogoutConfirm && (
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 backdrop-blur-md px-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-[#1c1c1e] p-6 rounded-3xl w-full max-w-sm border border-white/10 shadow-2xl"
+            >
+              <h2 className="text-xl font-black text-white mb-2 text-center">Déconnexion</h2>
+              <p className="text-white/70 text-center mb-8">Es-tu sûr de vouloir te déconnecter de ton compte ?</p>
+              
+              <div className="flex gap-3">
+                <button
+                  onClick={() => {
+                    setShowLogoutConfirm(false);
+                    toggleUI(true);
+                  }}
+                  className="flex-1 py-3 rounded-full font-bold bg-white/10 hover:bg-white/20 transition-colors text-white"
+                >
+                  Annuler
+                </button>
+                <button
+                  onClick={confirmSignOut}
+                  className="flex-1 py-3 rounded-full font-bold bg-red-500 text-white hover:bg-red-600 transition-colors"
+                >
+                  Déconnecter
+                </button>
               </div>
-
             </motion.div>
           </div>
         )}

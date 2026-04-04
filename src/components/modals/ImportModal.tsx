@@ -9,7 +9,7 @@ import { motion, AnimatePresence } from "framer-motion";
 
 export function ImportModal() {
   const { playlists, updatePlaylist } = usePlaylists();
-  const { status } = useMusic();
+  const { status, currentTrack } = useMusic();
   const { user } = useAuth();
   
   const [detectedTrack, setDetectedTrack] = useState(null);
@@ -21,12 +21,25 @@ export function ImportModal() {
   const [showDetectBtn, setShowDetectBtn] = useState(false);
   
   const lastLinkRef = useRef("");
+  
+  const initialMount = useRef(true);
+  const hideTimeoutRef = useRef(null);
 
-  // 🟢 Détecte si le mini-player est affiché (ajuste selon comment est construit ton status)
-  // Si status contient des infos sur la musique, hasMiniPlayer sera true.
-  const hasMiniPlayer = status && Object.keys(status).length > 0 && status !== "idle";
+  const hasMiniPlayer = currentTrack !== null;
+
+  // 🟢 LE VERROU : Bloque le scroll du fond quand la modale principale s'ouvre
+  useEffect(() => {
+    if (showModal) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => { document.body.style.overflow = ''; };
+  }, [showModal]);
 
   const processLink = async (textToProcess = null) => {
+    if (hideTimeoutRef.current) clearTimeout(hideTimeoutRef.current);
+
     try {
       let text = textToProcess;
       
@@ -35,6 +48,7 @@ export function ImportModal() {
       }
       
       if (!text || (!text.includes("tiktok") && !text.includes("youtu"))) {
+        setShowDetectBtn(false);
         return;
       }
 
@@ -61,15 +75,26 @@ export function ImportModal() {
 
   useEffect(() => {
     const checkClipboardSilently = async () => {
+      if (initialMount.current) {
+        initialMount.current = false;
+        return;
+      }
+
       try {
         const permission = await navigator.permissions.query({ name: 'clipboard-read' as any });
-        
         if (permission.state === 'granted' || permission.state === 'prompt') {
-            setShowDetectBtn(true);
+            // 🟢 CORRECTION DU BUG "ICONE FANTÔME" :
+            // Au lieu d'afficher le bouton aveuglément, on vérifie d'abord si le texte est pertinent.
+            const text = await navigator.clipboard.readText();
+            if (text && (text.includes("tiktok") || text.includes("youtu")) && text !== lastLinkRef.current) {
+              setShowDetectBtn(true);
+            } else {
+              setShowDetectBtn(false);
+            }
         }
       } catch (err) {
-         console.log("Erreur silencieuse presse-papier", err);
-         setShowDetectBtn(true);
+         // Si la permission est refusée, on ne montre rien par défaut.
+         setShowDetectBtn(false);
       }
     };
 
@@ -81,14 +106,25 @@ export function ImportModal() {
 
     window.addEventListener("focus", checkClipboardSilently);
     document.addEventListener("visibilitychange", handleVisibility);
-    
-    checkClipboardSilently();
+
+    setTimeout(() => { initialMount.current = false; }, 1000);
 
     return () => {
       window.removeEventListener("focus", checkClipboardSilently);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
   }, []);
+
+  useEffect(() => {
+    if (showDetectBtn) {
+      hideTimeoutRef.current = setTimeout(() => {
+        setShowDetectBtn(false);
+      }, 8000);
+    }
+    return () => {
+      if (hideTimeoutRef.current) clearTimeout(hideTimeoutRef.current);
+    };
+  }, [showDetectBtn]);
 
   const handleAddToPlaylist = (playlistId) => {
     const playlist = playlists.find(p => p.id === playlistId);
@@ -132,7 +168,6 @@ export function ImportModal() {
 
   return (
     <>
-      {/* 🟢 LE NOUVEAU BOUTON MAGIQUE (Swipeable & Dynamique) */}
       <AnimatePresence>
         {!showModal && showDetectBtn && (
           <motion.div
@@ -140,41 +175,39 @@ export function ImportModal() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 50, scale: 0.9 }}
             transition={{ type: "spring", stiffness: 300, damping: 25 }}
-            // On ajuste la hauteur : bottom-36 si mini-player, bottom-24 s'il n'y est pas
-            // pointer-events-none garantit qu'on peut cliquer à travers le conteneur transparent
-            className={`fixed left-0 right-0 z-[9000] flex justify-center px-4 pointer-events-none transition-all duration-300 ${hasMiniPlayer ? 'bottom-[140px]' : 'bottom-[90px]'}`}
+            className={`fixed left-0 right-0 z-[9000] flex justify-center px-4 pointer-events-none transition-all duration-300 ${hasMiniPlayer ? 'bottom-[160px]' : 'bottom-[100px]'}`}
           >
             <motion.button
               drag="y"
               dragConstraints={{ top: 0, bottom: 0 }}
               dragElastic={0.4}
               onDragEnd={(e, info) => {
-                // Si l'utilisateur glisse vers le bas de plus de 30px, on ferme le bouton
                 if (info.offset.y > 30) {
                   setShowDetectBtn(false);
                 }
               }}
               onClick={() => processLink()}
-              // pointer-events-auto rend UNIQUEMENT ce petit bouton cliquable
               className="pointer-events-auto bg-[#1db954] text-black font-bold px-5 py-2.5 rounded-full shadow-[0_10px_25px_rgba(29,185,84,0.3)] flex items-center gap-2 hover:scale-105 active:scale-95 transition-transform"
             >
               <span className="text-lg">📋</span>
-              <span className="text-sm">Lien détecté</span>
+              <span className="text-sm">Coller un lien ?</span>
               <span className="text-black/50 text-xs ml-1 border-l border-black/20 pl-2 hidden sm:inline-block">Swipe ↓ pour ignorer</span>
             </motion.button>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* 🟢 LE RESTE DE LA MODALE (Inchangé) */}
       <AnimatePresence>
         {showModal && (
-          <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 sm:p-6 bg-black/90 backdrop-blur-xl">
+          // 🟢 MODIFICATION ICI : Centrage parfait de la modale sur tous les écrans, et fond `touch-none`
+          <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 sm:p-6 w-full h-[100dvh]">
+            <div className="absolute inset-0 bg-black/90 backdrop-blur-xl touch-none" onClick={closeModal} />
             <motion.div 
-              initial={{ y: 50, opacity: 0, scale: 0.9 }} 
-              animate={{ y: 0, opacity: 1, scale: 1 }} 
-              exit={{ y: 50, opacity: 0, scale: 0.9 }}
-              className="bg-[#1c1c1e] w-full max-w-md rounded-[32px] overflow-hidden border border-white/10 shadow-2xl"
+              // 🟢 MODIFICATION ICI : Apparition au centre via 'scale' au lieu d'un glissement du bas.
+              initial={{ scale: 0.95, opacity: 0 }} 
+              animate={{ scale: 1, opacity: 1 }} 
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="relative bg-[#1c1c1e] w-full max-w-sm sm:max-w-md rounded-[32px] overflow-hidden border border-white/10 shadow-2xl pointer-events-auto max-h-[90dvh] flex flex-col"
             >
               
               {step === "loading" && (
@@ -185,7 +218,7 @@ export function ImportModal() {
               )}
 
               {step === "confirm" && detectedTrack && (
-                <div className="p-8 text-center">
+                <div className="p-8 text-center overflow-y-auto custom-scrollbar">
                   <div className="w-20 h-20 bg-gradient-to-tr from-[#1db954] to-[#1ed760] rounded-3xl flex items-center justify-center mx-auto mb-6 rotate-12 shadow-[0_0_30px_rgba(29,185,84,0.3)]">
                     <span className="text-4xl -rotate-12">🎵</span>
                   </div>
@@ -213,13 +246,13 @@ export function ImportModal() {
               )}
 
               {step === "playlist" && (
-                <div className="p-8 flex flex-col max-h-[85vh]">
-                   <div className="flex justify-between items-center mb-6">
+                <div className="p-8 flex flex-col max-h-[70vh]">
+                   <div className="flex justify-between items-center mb-6 shrink-0">
                      <h2 className="text-2xl font-black text-white">Tes Playlists</h2>
-                     <button onClick={() => setStep("confirm")} className="text-white/40 text-sm">Retour</button>
+                     <button onClick={() => setStep("confirm")} className="text-white/40 text-sm hover:text-white transition-colors">Retour</button>
                    </div>
                    
-                   <div className="space-y-3 overflow-y-auto pr-1 custom-scrollbar">
+                   <div className="space-y-3 overflow-y-auto pr-1 custom-scrollbar flex-1">
                       {playlists.map(p => (
                         <button key={p.id} onClick={() => handleAddToPlaylist(p.id)} className="w-full flex items-center gap-4 p-3 rounded-2xl bg-white/5 hover:bg-[#1db954]/20 border border-white/5 transition-all text-left">
                           <div className="w-12 h-12 bg-black rounded-lg flex items-center justify-center overflow-hidden shrink-0">
@@ -233,7 +266,7 @@ export function ImportModal() {
               )}
 
               {step === "error" && (
-                <div className="p-8 text-center">
+                <div className="p-8 text-center overflow-y-auto custom-scrollbar">
                   <div className="w-20 h-20 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
                     <span className="text-4xl">⚠️</span>
                   </div>
@@ -255,12 +288,14 @@ export function ImportModal() {
                   )}
                   
                   <div className="flex gap-2 mb-6">
+                    {/* 🟢 Pas d'autoFocus pour empêcher le clavier iOS de faire sauter la page */}
                     <input 
                       type="text" 
                       value={manualInput}
                       onChange={(e) => setManualInput(e.target.value)}
                       placeholder="Ex: Titre ou Artiste..."
                       className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-[#1db954] text-white"
+                      onKeyDown={(e) => e.key === 'Enter' && handleManualSearch()}
                     />
                   </div>
 
