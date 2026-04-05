@@ -49,8 +49,14 @@ export function MiniPlayer() {
 
   return (
     <div 
-      // 🟢 CSS : On ajoute "translate-y-40" et "opacity-0" si isHiddenBySwipe est à true
-      className={`fixed bottom-24 left-4 right-4 z-40 cursor-pointer rounded-2xl bg-[#1c1c1e]/95 backdrop-blur-xl border border-white/5 shadow-[0_15px_35px_rgba(0,0,0,0.5)] transition-all duration-300 group overflow-hidden ${isHiddenBySwipe ? "translate-y-40 opacity-0 pointer-events-none" : "translate-y-0 opacity-100"}`}
+      // 🟢 CSS : "bottom-24" a été supprimé ici
+      className={`fixed left-4 right-4 z-40 cursor-pointer rounded-2xl bg-[#1c1c1e]/95 backdrop-blur-xl border border-white/5 shadow-[0_15px_35px_rgba(0,0,0,0.5)] transition-all duration-300 group overflow-hidden ${isHiddenBySwipe ? "translate-y-40 opacity-0 pointer-events-none" : "translate-y-0 opacity-100"}`}
+      
+      // 🟢 DYNAMIQUE : Le lecteur monte de façon fluide avec le clavier !
+      style={{
+        bottom: "calc(6rem + var(--keyboard-height, 0px))"
+      }}
+
       onClick={(e) => {
         const target = e.target as HTMLElement;
         const isInteractive = target.closest('button') || target.tagName === 'INPUT';

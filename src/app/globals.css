@@ -95,28 +95,40 @@
 *::after {
   box-sizing: border-box;
   -webkit-tap-highlight-color: transparent;
+  
+  /* 🟢 BÉTON ARMÉ : Bloque le surlignage et la loupe iOS partout */
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  -khtml-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
 }
 
-html {
+/* 🟢 BÉTON ARMÉ : Anti-scroll infini (Rubber-banding) et suppression absolue du fond blanc */
+:root, html, body {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100vw;
+  height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+  
+  /* C'est ce !important qui empêche la barre blanche d'apparaître sous le clavier iOS */
+  background-color: #121212 !important; 
+  
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
-  scroll-behavior: smooth;
-}
-
-body {
-  font-family: var(--font-sans), system-ui, sans-serif;
-  min-height: 100dvh;
-  /* Évite le rebond élastique de page sur iOS sans tout bloquer */
-  overscroll-behavior: none;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  overflow-x: hidden;
+  font-family: var(--font-sans), system-ui, sans-serif;
 }
 
 button,
 [role="button"] {
-  user-select: none;
-  -webkit-user-select: none;
   cursor: pointer;
 }
 
@@ -127,13 +139,22 @@ select {
   appearance: none;
   border-radius: 0;
   font-size: 16px;
+
+  /* 🟢 EXCEPTION : On réactive la sélection uniquement pour taper du texte */
+  -webkit-touch-callout: default !important;
+  -webkit-user-select: auto !important;
+  -khtml-user-select: auto !important;
+  -moz-user-select: auto !important;
+  -ms-user-select: auto !important;
+  user-select: auto !important;
 }
 
 img {
   max-width: 100%;
   height: auto;
   -webkit-user-drag: none;
-  user-select: none;
+  /* L'image est déjà couverte par le * mais on renforce au cas où */
+  user-select: none; 
 }
 
 .custom-scrollbar::-webkit-scrollbar {

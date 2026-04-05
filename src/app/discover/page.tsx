@@ -29,9 +29,10 @@ const TrackProgressBar = ({ audioRef, isPlaying }) => {
 
   useEffect(() => {
     let interval;
-    if (isPlaying && audioRef.current) {
+    if (isPlaying) {
       interval = setInterval(() => {
-        if (audioRef.current.duration > 0) {
+        // 🟢 CORRECTION ICI : On vérifie que audioRef.current existe toujours à l'instant T
+        if (audioRef?.current && audioRef.current.duration > 0) {
           setProgress((audioRef.current.currentTime / audioRef.current.duration) * 100);
         }
       }, 250);
@@ -52,8 +53,7 @@ const TrackProgressBar = ({ audioRef, isPlaying }) => {
 export default function DiscoverPage() {
   const { playlists, createPlaylist, updatePlaylist } = usePlaylists();
   
-  // 🟢 On détecte le mini-lecteur pour ajuster l'espace en bas de l'écran
-  const { currentTrack } = useMusic();
+  const { currentTrack, status: mainPlayerStatus, togglePlayPause } = useMusic();
   const hasMiniPlayer = currentTrack !== null;
 
   const [tracks,          setTracks]          = useState([]);
@@ -68,6 +68,11 @@ export default function DiscoverPage() {
   const [isMounted,       setIsMounted]       = useState(false);
 
   const audioRef     = useRef(null);
+  
+  const mainStatusRef = useRef(mainPlayerStatus);
+  useEffect(() => {
+    mainStatusRef.current = mainPlayerStatus;
+  }, [mainPlayerStatus]);
 
   const controls    = useAnimation();
   const dragX       = useMotionValue(0);
@@ -155,6 +160,10 @@ export default function DiscoverPage() {
         .then(() => {
           setIsAudioBlocked(false);
           setIsPlaying(true);
+          
+          if (mainStatusRef.current === "playing") {
+            togglePlayPause();
+          }
         })
         .catch((err) => {
           if (err.name === "NotAllowedError") {
@@ -168,7 +177,16 @@ export default function DiscoverPage() {
     return () => {
       audio.pause();
     };
-  }, [currentIndex, activeTrack, activeModal]);
+  }, [currentIndex, activeTrack, activeModal]); 
+
+  useEffect(() => {
+    if (mainPlayerStatus === "playing" && isPlaying) {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        setIsPlaying(false);
+      }
+    }
+  }, [mainPlayerStatus, isPlaying]);
 
   const goToNext = useCallback(() => {
     setIsPlaying(false);
@@ -240,7 +258,6 @@ export default function DiscoverPage() {
   };
 
   const onDragEnd = (_, info) => {
-    // 🟢 RÉTABLI : Crucial pour que la carte revienne au centre visuellement 
     dragX.set(0); 
 
     if      (info.offset.x >  110) handleSwipeIntent("right");
@@ -257,6 +274,9 @@ export default function DiscoverPage() {
     audioRef.current.play()
       .then(() => {
         setIsPlaying(true);
+        if (mainStatusRef.current === "playing") {
+          togglePlayPause();
+        }
       })
       .catch(() => {});
   };
@@ -270,7 +290,6 @@ export default function DiscoverPage() {
   if (!isMounted) return null;
 
   return (
-    // 🟢 RACINE FIGÉE : La page ne peut plus bouger du tout.
     <div className="fixed inset-0 w-full h-[100dvh] text-white flex flex-col bg-[#0e0e0e] overflow-hidden">
       <Header />
 
@@ -310,7 +329,6 @@ export default function DiscoverPage() {
         </AnimatePresence>
       </div>
 
-      {/* 🟢 ZONE DE LA CARTE : Calcule automatiquement sa taille pour s'écraser proprement */}
       <div className="flex-1 w-full max-w-sm mx-auto relative min-h-0 px-4 py-2 flex items-center justify-center">
         
         <motion.div layout className="relative w-full h-full max-h-[550px]">
@@ -364,7 +382,6 @@ export default function DiscoverPage() {
 
                 <div className="absolute inset-0 flex flex-col p-4 sm:p-6 z-10 bg-gradient-to-b from-transparent via-black/40 to-black/95">
                   
-                  {/* 🟢 Image qui se réduit proprement si l'écran manque d'espace */}
                   <div className="flex-1 min-h-0 flex items-center justify-center py-2 overflow-hidden">
                     <img src={activeTrack.image} alt={activeTrack.title}
                       loading="lazy" decoding="async"
@@ -416,7 +433,6 @@ export default function DiscoverPage() {
         </motion.div>
       </div>
 
-      {/* 🟢 LE COUSSIN MAGIQUE : Il pousse la carte vers le haut de 160px si le lecteur joue, 100px sinon */}
       <div className={`w-full shrink-0 transition-all duration-300 ${hasMiniPlayer ? 'h-[160px]' : 'h-[100px]'}`} />
 
       {/* ======================================================= */}

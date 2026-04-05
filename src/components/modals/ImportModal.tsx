@@ -1,7 +1,7 @@
 // @ts-nocheck
 "use client";
 
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import { usePlaylists } from "@/context/PlaylistContext";
 import { useMusic } from "@/context/MusicContext";
 import { useAuth } from "@/context/AuthContext";
@@ -21,13 +21,13 @@ export function ImportModal() {
   const [showDetectBtn, setShowDetectBtn] = useState(false);
   
   const lastLinkRef = useRef("");
-  
   const initialMount = useRef(true);
   const hideTimeoutRef = useRef(null);
+  const isArmedRef = useRef(false); // 🟢 Permet de savoir si le piège du "Premier Tap" est actif
 
   const hasMiniPlayer = currentTrack !== null;
 
-  // 🟢 LE VERROU : Bloque le scroll du fond quand la modale principale s'ouvre
+  // Bloque le scroll du fond quand la modale s'ouvre
   useEffect(() => {
     if (showModal) {
       document.body.style.overflow = 'hidden';
@@ -73,47 +73,69 @@ export function ImportModal() {
     }
   };
 
-  useEffect(() => {
-    const checkClipboardSilently = async () => {
-      if (initialMount.current) {
-        initialMount.current = false;
-        return;
+  // 🟢 LA LOGIQUE DU PRESSE-PAPIER
+  const checkClipboard = useCallback(async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text && (text.includes("tiktok") || text.includes("youtu")) && text !== lastLinkRef.current) {
+        setShowDetectBtn(true);
+      } else {
+        setShowDetectBtn(false);
       }
+    } catch (err) {
+      // Échec de la lecture (souvent car le navigateur refuse sans interaction)
+      setShowDetectBtn(false);
+    }
+  }, []);
 
-      try {
-        const permission = await navigator.permissions.query({ name: 'clipboard-read' as any });
-        if (permission.state === 'granted' || permission.state === 'prompt') {
-            // 🟢 CORRECTION DU BUG "ICONE FANTÔME" :
-            // Au lieu d'afficher le bouton aveuglément, on vérifie d'abord si le texte est pertinent.
-            const text = await navigator.clipboard.readText();
-            if (text && (text.includes("tiktok") || text.includes("youtu")) && text !== lastLinkRef.current) {
-              setShowDetectBtn(true);
-            } else {
-              setShowDetectBtn(false);
-            }
-        }
-      } catch (err) {
-         // Si la permission est refusée, on ne montre rien par défaut.
-         setShowDetectBtn(false);
+  // 🟢 LE HACK "PREMIER TAP" POUR IOS / ANDROID
+  useEffect(() => {
+    // 1. La fonction qui s'exécute au premier clic
+    const handleFirstTap = () => {
+      if (isArmedRef.current) {
+        checkClipboard();
+        isArmedRef.current = false; // On désarme le piège
       }
     };
 
+    // 2. Ce qui se passe quand l'application revient au premier plan
     const handleVisibility = () => {
       if (document.visibilityState === "visible") {
-        setTimeout(checkClipboardSilently, 500);
+        if (initialMount.current) {
+          initialMount.current = false;
+          return;
+        }
+
+        // On essaie d'abord la méthode "douce" (qui marche sur PC)
+        navigator.permissions?.query({ name: 'clipboard-read' as any })
+          .then(permission => {
+            if (permission.state === 'granted') {
+              checkClipboard();
+            } else {
+              // Si la permission n'est pas accordée par défaut (cas des mobiles), on arme le piège
+              isArmedRef.current = true;
+            }
+          })
+          .catch(() => {
+            // Safari ne supporte parfois pas permissions.query, donc on arme le piège par sécurité
+            isArmedRef.current = true;
+          });
       }
     };
 
-    window.addEventListener("focus", checkClipboardSilently);
+    // 3. On attache nos écouteurs
+    window.addEventListener("pointerdown", handleFirstTap, { passive: true }); // Écoute le moindre touché
     document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("focus", handleVisibility);
 
     setTimeout(() => { initialMount.current = false; }, 1000);
 
     return () => {
-      window.removeEventListener("focus", checkClipboardSilently);
+      window.removeEventListener("pointerdown", handleFirstTap);
       document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("focus", handleVisibility);
     };
-  }, []);
+  }, [checkClipboard]);
 
   useEffect(() => {
     if (showDetectBtn) {
@@ -199,11 +221,9 @@ export function ImportModal() {
 
       <AnimatePresence>
         {showModal && (
-          // 🟢 MODIFICATION ICI : Centrage parfait de la modale sur tous les écrans, et fond `touch-none`
           <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 sm:p-6 w-full h-[100dvh]">
             <div className="absolute inset-0 bg-black/90 backdrop-blur-xl touch-none" onClick={closeModal} />
             <motion.div 
-              // 🟢 MODIFICATION ICI : Apparition au centre via 'scale' au lieu d'un glissement du bas.
               initial={{ scale: 0.95, opacity: 0 }} 
               animate={{ scale: 1, opacity: 1 }} 
               exit={{ scale: 0.95, opacity: 0 }}
@@ -288,7 +308,6 @@ export function ImportModal() {
                   )}
                   
                   <div className="flex gap-2 mb-6">
-                    {/* 🟢 Pas d'autoFocus pour empêcher le clavier iOS de faire sauter la page */}
                     <input 
                       type="text" 
                       value={manualInput}

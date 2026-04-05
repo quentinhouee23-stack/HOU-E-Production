@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import Image from "next/image"; // 🟢 IMPORT DU COMPOSANT OPTIMISÉ
+import Image from "next/image"; 
 import { useMusic } from "@/context/MusicContext";
 import { motion, AnimatePresence } from "framer-motion";
 import { Moon, X, Clock } from "lucide-react";
@@ -70,7 +70,7 @@ export function FullScreenPlayer() {
           }}
           className="fixed inset-0 z-[99999] bg-[#121212] flex flex-col h-[100dvh] overflow-hidden touch-pan-y"
         >
-          {/* 🟢 FOND FLOU OPTIMISÉ */}
+          {/* FOND FLOU OPTIMISÉ */}
           <div className="absolute inset-0 opacity-20 blur-[100px] pointer-events-none scale-150">
             {currentTrack.image && (
               <Image 
@@ -82,7 +82,8 @@ export function FullScreenPlayer() {
             )}
           </div>
 
-          <div className="relative z-10 flex flex-col h-full p-6 sm:p-10 max-w-lg mx-auto w-full">
+          {/* 🟢 LA MAGIE EST ICI : Le padding top et bottom utilisent "env(safe-area-inset-*)" */}
+          <div className="relative z-10 flex flex-col h-full px-6 sm:px-10 pt-[calc(env(safe-area-inset-top)+1.5rem)] pb-[calc(env(safe-area-inset-bottom)+1.5rem)] max-w-lg mx-auto w-full">
             
             <div className="flex items-center justify-between mb-4 shrink-0">
               <button onClick={() => setIsFullScreen(false)} className="w-12 h-12 flex items-center justify-center rounded-full bg-white/5 hover:bg-white/10 text-white transition-colors">
@@ -106,7 +107,7 @@ export function FullScreenPlayer() {
               </button>
             </div>
 
-            {/* 🟢 POCHETTE D'ALBUM OPTIMISÉE (ajout de 'relative' et 'priority') */}
+            {/* POCHETTE D'ALBUM OPTIMISÉE */}
             <div className="flex-1 min-h-0 flex items-center justify-center py-4 pointer-events-none">
               <div className="relative w-full h-full max-h-[400px] max-w-[400px] aspect-square bg-white/5 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] overflow-hidden shrink-0">
                  {currentTrack.image ? (
@@ -115,7 +116,7 @@ export function FullScreenPlayer() {
                      alt={currentTrack.title} 
                      fill
                      sizes="(max-width: 768px) 100vw, 400px"
-                     priority // Dit au navigateur de charger ça instantanément
+                     priority 
                      className="object-cover" 
                    />
                  ) : (
@@ -124,7 +125,7 @@ export function FullScreenPlayer() {
               </div>
             </div>
 
-            <div className="shrink-0 pb-6">
+            <div className="shrink-0 pb-2">
               <div className="overflow-hidden mb-6 pointer-events-none">
                 <h1 className="text-2xl sm:text-3xl font-black mb-1 truncate text-white">{currentTrack.title}</h1>
                 <p className="text-white/60 text-lg truncate">{currentTrack.artist}</p>
@@ -203,7 +204,8 @@ export function FullScreenPlayer() {
                   exit={{ y: "100%" }}
                   transition={{ type: "spring", damping: 25, stiffness: 300 }}
                   onClick={(e) => e.stopPropagation()}
-                  className="bg-[#1c1c1e] w-full rounded-t-[32px] p-6 pb-12 border-t border-white/10 shadow-2xl"
+                  // 🟢 ICI AUSSI : On gère le safe-area-bottom pour les iPhone sans bouton Home
+                  className="bg-[#1c1c1e] w-full rounded-t-[32px] p-6 pb-[calc(env(safe-area-inset-bottom)+1.5rem)] border-t border-white/10 shadow-2xl"
                 >
                   <div className="flex items-center justify-between mb-6">
                     <h2 className="text-2xl font-black text-white">Minuteur</h2>

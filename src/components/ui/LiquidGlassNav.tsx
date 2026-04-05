@@ -3,7 +3,7 @@
 
 import React, { useState, useRef, useEffect, useCallback, useTransition } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { Home, Search, ListMusic, Compass, X } from "lucide-react";
+import { Home, Search, ListMusic, Compass } from "lucide-react"; // 🟢 J'ai retiré l'icône X
 import { motion, AnimatePresence, LayoutGroup, useMotionValue, useSpring, useTransform } from "framer-motion";
 import { cn } from "@/lib/utils";
 import GlassSurface from "./GlassSurface";
@@ -21,22 +21,21 @@ const PILL_SPRING  = { type: "spring", stiffness: 450, damping: 35, mass: 0.6 } 
 const SLIDE_SPRING = { type: "spring", stiffness: 450, damping: 35, mass: 0.6 } as const;
 const FAST_TWEEN   = { type: "tween",  duration: 0.12, ease: "easeOut" } as const;
 
-
 // ─── Props partagés pour GlassSurface ────────────────────────────────────────
 const GLASS_PROPS = {
   width:            "100%",
   height:           "100%",
   borderRadius:     9999,
   borderWidth:      0.05,
-  distortionScale:  -150,  // La force de la déformation liquide
-  brightness:       10,    // Luminosité très basse pour le dark mode
-  opacity:          0.05,  // 🟢 TRÈS IMPORTANT : Presque transparent pour voir au travers !
-  blur:             8,     // Niveau de flou de la distorsion
-  backgroundOpacity: 0.1,  // Teinte de fond ultra légère
+  distortionScale:  -150, 
+  brightness:       10,   
+  opacity:          0.05, 
+  blur:             8,    
+  backgroundOpacity: 0.1, 
   saturation:       1.5,
-  redOffset:        8,     // Aberration chromatique rouge
+  redOffset:        8,    
   greenOffset:      0,
-  blueOffset:       -8,    // Aberration chromatique bleue
+  blueOffset:       -8,   
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -113,15 +112,15 @@ export function LiquidGlassNav() {
   const maxDragX = Math.max(containerW - 72, 100);
   const pillScale = useTransform(
     smoothDragX,
-    [0, Math.max(0, maxDragX - 100), Math.max(0, maxDragX - 50), maxDragX],
-    [1, 1, 0.4, 1]
+    [0, Math.max(0, maxDragX - 80), Math.max(0, maxDragX - 40), maxDragX],
+    [1, 1, 0.85, 1]
   );
 
   const containerRef      = useRef<HTMLDivElement>(null);
   const inputRef          = useRef<HTMLInputElement>(null);
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pointerDownPos    = useRef<number | null>(null);
 
-  // ── ResizeObserver pour la largeur du container ───────────────────────────
   useEffect(() => {
     if (!containerRef.current) return;
     const observer = new ResizeObserver((entries) => {
@@ -131,18 +130,15 @@ export function LiquidGlassNav() {
     return () => observer.disconnect();
   }, []);
 
-  // 🟢 ── Gestion ultra-fluide du clavier virtuel ────────────────────────────
   useEffect(() => {
     const vv = window?.visualViewport;
     if (!vv) return;
     
     const updateKeyboardHeight = () => {
-      const keyboardHeight = window.innerHeight - vv.height;
-      // On met à jour directement le CSS sans passer par un setState pour garantir les 60 FPS
-      document.documentElement.style.setProperty('--keyboard-height', `${Math.max(0, keyboardHeight)}px`);
+      const offsetBottom = window.innerHeight - (vv.offsetTop + vv.height);
+      document.documentElement.style.setProperty('--keyboard-height', `${Math.max(0, offsetBottom)}px`);
     };
 
-    // On écoute le redimensionnement ET le scroll (indispensable pour les rebonds iOS)
     vv.addEventListener("resize", updateKeyboardHeight);
     vv.addEventListener("scroll", updateKeyboardHeight);
     updateKeyboardHeight();
@@ -153,7 +149,6 @@ export function LiquidGlassNav() {
     };
   }, []);
 
-  // ── Visibilité (showNav / hideNav) ────────────────────────────────────────
   useEffect(() => {
     const show = () => setIsVisible(true);
     const hide = () => setIsVisible(false);
@@ -199,31 +194,49 @@ export function LiquidGlassNav() {
     return Math.min(3, Math.floor((x / width) * 4));
   }, []);
 
+  const getClampedTargetX = useCallback((clientX: number) => {
+    if (!containerRef.current) return 0;
+    const rect = containerRef.current.getBoundingClientRect();
+    const maxAllowedX = rect.width - 86;
+    let targetX = clientX - rect.left - 36;
+    return Math.max(0, Math.min(targetX, maxAllowedX));
+  }, []);
+
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
     if (isSearchActive || isPending) return;
-    setIsDragging(true);
+    pointerDownPos.current = e.clientX;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    const rect = containerRef.current.getBoundingClientRect();
-    dragX.set(e.clientX - rect.left - 36);
-    setDragIndex(computeIndex(e.clientX));
-  }, [isSearchActive, isPending, computeIndex, dragX]);
+  }, [isSearchActive, isPending]);
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
-    if (!isDragging || isSearchActive || isPending) return;
-    const rect = containerRef.current.getBoundingClientRect();
-    const x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
-    dragX.set(x - 36);
-    setDragIndex(computeIndex(e.clientX));
-  }, [isDragging, isSearchActive, isPending, computeIndex, dragX]);
+    if (isSearchActive || isPending || pointerDownPos.current === null) return;
+    
+    const deltaX = Math.abs(e.clientX - pointerDownPos.current);
+    if (!isDragging && deltaX > 5) {
+      setIsDragging(true);
+      dragX.set(getClampedTargetX(e.clientX));
+    }
+
+    if (isDragging) {
+      dragX.set(getClampedTargetX(e.clientX));
+      setDragIndex(computeIndex(e.clientX));
+    }
+  }, [isDragging, isSearchActive, isPending, computeIndex, dragX, getClampedTargetX]);
 
   const handlePointerUp = useCallback((e: React.PointerEvent) => {
-    if (!isDragging) return;
-    setIsDragging(false);
+    pointerDownPos.current = null; 
     (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
-    if (isPending) return;
+    
+    // 🟢 CORRECTION DU BUG "PLAYLIST" : On empêche le calcul et la navigation si on est en mode recherche !
+    if (isPending || isSearchActive) return;
 
     const idx  = computeIndex(e.clientX);
     const item = NAV_ITEMS[idx];
+
+    if (isDragging) {
+      setIsDragging(false);
+    }
+    
     setOptimisticIdx(idx);
 
     if (item.isSearch) {
@@ -244,14 +257,25 @@ export function LiquidGlassNav() {
     setDragIndex(null);
   }, [isDragging, computeIndex, pathname, router, isSearchActive, isPending]);
 
-  const currentIdx    = NAV_ITEMS.findIndex(
+  const currentIdx = Math.max(0, NAV_ITEMS.findIndex(
     (i) => pathname === i.href || (i.href !== "/" && pathname.startsWith(i.href))
-  );
+  ));
+  
   const activePillIdx = dragIndex !== null
     ? dragIndex
     : optimisticIdx !== null
       ? optimisticIdx
       : currentIdx;
+
+  useEffect(() => {
+    if (!containerRef.current || isDragging) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const segmentWidth = rect.width / 4;
+    const maxAllowedX = rect.width - 86;
+    let targetX = (segmentWidth * activePillIdx) + (segmentWidth / 2) - 36;
+    
+    dragX.set(Math.max(0, Math.min(targetX, maxAllowedX)));
+  }, [activePillIdx, isDragging, containerW, dragX]);
 
   const openSearch = useCallback(() => {
     if (isPending || isSearchActive) return;
@@ -282,13 +306,11 @@ export function LiquidGlassNav() {
           exit={{    y: 120, opacity: 0 }}
           transition={{ type: "spring", stiffness: 370, damping: 32 }}
           className="fixed left-1/2 -translate-x-1/2 w-[92%] max-w-md z-[100] select-none"
-          // 🟢 La magie opère ici : La barre se soulève en utilisant la variable CSS sans passer par React
           style={{ 
             bottom: "calc(24px + var(--keyboard-height, 0px))",
             transition: "bottom 0.15s ease-out" 
           }}
         >
-          {/* Ombre portée */}
           <div
             aria-hidden
             style={{
@@ -317,7 +339,6 @@ export function LiquidGlassNav() {
               style={{ cursor: isSearchActive ? "default" : "pointer" }}
             >
 
-              {/* ── Pill de drag flottante ───────────────────────────────── */}
               {isDragging && !isSearchActive && (
                 <motion.div
                   layoutId="active-pill"
@@ -334,19 +355,16 @@ export function LiquidGlassNav() {
                 />
               )}
 
-              {/* ── Pill principal (nav / search input) ─────────────────── */}
               <motion.div
                 layout
                 transition={SLIDE_SPRING}
                 className="flex-1 h-16 rounded-full relative overflow-hidden shadow-2xl z-10"
               >
-                {/* GlassSurface en fond */}
                 <GlassSurface
                   {...GLASS_PROPS}
                   style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }}
                 />
 
-                {/* Contenu animé par-dessus */}
                 <AnimatePresence initial={false}>
                   {!isSearchActive ? (
                     <motion.div
@@ -392,46 +410,30 @@ export function LiquidGlassNav() {
                         placeholder="Artistes, titres, albums…"
                         className="flex-1 bg-transparent outline-none font-medium text-white placeholder:text-white/30"
                         style={{ fontSize: 16 }}
+                        type="search"
+                        inputMode="search"
+                        enterKeyHint="search"
+                        autoComplete="off"
+                        autoCorrect="off"
+                        spellCheck="false"
                       />
-                      <AnimatePresence>
-                        {searchQuery.length > 0 && (
-                          <motion.button
-                            key="clear"
-                            initial={{ opacity: 0, scale: 0.5 }}
-                            animate={{ opacity: 1, scale: 1 }}
-                            exit={{    opacity: 0, scale: 0.5 }}
-                            whileTap={{ scale: 0.8 }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSearchQuery("");
-                              startTransition(() => { router.replace("/search"); });
-                              inputRef.current?.focus();
-                            }}
-                            className="shrink-0 w-7 h-7 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-colors"
-                          >
-                            <X className="w-4 h-4 text-white/70" strokeWidth={2.5} />
-                          </motion.button>
-                        )}
-                      </AnimatePresence>
+                      {/* 🟢 La croix "X" inutile a été supprimée ici */}
                     </motion.div>
                   )}
                 </AnimatePresence>
               </motion.div>
 
-              {/* ── Bouton loupe / retour ────────────────────────────────── */}
               <motion.button
                 layout
                 onClick={isSearchActive ? closeSearch : openSearch}
                 transition={SLIDE_SPRING}
                 className="w-16 h-16 rounded-full shrink-0 relative overflow-hidden flex items-center justify-center z-20 cursor-pointer"
               >
-                {/* GlassSurface en fond */}
                 <GlassSurface
                   {...GLASS_PROPS}
                   style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }}
                 />
 
-                {/* Pill active sur la loupe */}
                 {!isSearchActive && activePillIdx === 3 && !isDragging && (
                   <motion.div
                     layoutId="active-pill"
@@ -441,7 +443,6 @@ export function LiquidGlassNav() {
                   />
                 )}
 
-                {/* Icône animée */}
                 <AnimatePresence mode="wait">
                   {!isSearchActive ? (
                     <motion.div

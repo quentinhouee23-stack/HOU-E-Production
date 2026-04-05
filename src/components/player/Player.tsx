@@ -11,6 +11,9 @@ export function Player() {
   const playerContainerRef = useRef(null);
   const ytPlayerInstance = useRef(null);
   const progressInterval = useRef(null);
+
+  // 🟢 LA RÉFÉRENCE DE L'AUDIO FANTÔME
+  const ghostAudioRef = useRef<HTMLAudioElement>(null);
   
   const isReady = useRef(false);
   const pendingVideoId = useRef<string | null>(null);
@@ -33,7 +36,7 @@ export function Player() {
         width: "100", 
         height: "100",
         playerVars: {
-          autoplay: 0, // 🟢 SÉCURITÉ : On s'assure que l'autoplay brut est désactivé
+          autoplay: 0, 
           controls: 0, 
           disablekb: 1, 
           fs: 0, 
@@ -50,11 +53,9 @@ export function Player() {
             
             const vidToLoad = pendingVideoId.current || videoId;
             if (vidToLoad) {
-              // 🟢 CORRECTION PC : On ne lance la vidéo QUE si le statut est déjà sur "playing"
               if (status === "playing") {
                 event.target.loadVideoById(vidToLoad);
               } else {
-                // cueVideoById charge la vidéo en fond sans la lancer
                 event.target.cueVideoById(vidToLoad);
               }
               pendingVideoId.current = null;
@@ -99,7 +100,6 @@ export function Player() {
     return () => clearInterval(progressInterval.current);
   }, []);
 
-  // HACK IOS
   useEffect(() => {
     const handleIOSUnlock = (e: CustomEvent) => {
       const player = ytPlayerInstance.current;
@@ -111,13 +111,18 @@ export function Player() {
       } else {
         player.playVideo();
       }
+
+      // 🟢 On s'assure d'amorcer l'audio fantôme dès le premier clic de l'utilisateur
+      if (ghostAudioRef.current) {
+        ghostAudioRef.current.play().catch(() => {});
+        ghostAudioRef.current.pause();
+      }
     };
 
     window.addEventListener("iosUnlock", handleIOSUnlock as EventListener);
     return () => window.removeEventListener("iosUnlock", handleIOSUnlock as EventListener);
   }, []);
 
-  // Changement de vidéo géré par React
   useEffect(() => {
     const player = ytPlayerInstance.current;
     if (!videoId || !player?.loadVideoById || !isReady.current) {
@@ -125,7 +130,6 @@ export function Player() {
       return;
     }
     
-    // 🟢 CORRECTION PC : On prépare la vidéo sans la forcer si on est sur pause
     if (status === "playing") {
       player.loadVideoById(videoId);
     } else {
@@ -133,12 +137,21 @@ export function Player() {
     }
   }, [videoId]);
 
+  // 🟢 LE HACK : SYNCHRONISATION DU LECTEUR ET DE L'AUDIO FANTÔME
   useEffect(() => {
     if (ytPlayerInstance.current && ytPlayerInstance.current.playVideo) {
       if (status === "playing") {
         ytPlayerInstance.current.playVideo();
+        // On active le son silencieux pour empêcher le téléphone de tuer l'onglet
+        if (ghostAudioRef.current) {
+          ghostAudioRef.current.play().catch(() => console.log("Ghost audio autoplay blocked"));
+        }
       } else if (status === "paused" || status === "idle") {
         ytPlayerInstance.current.pauseVideo();
+        // On met en pause pour économiser la batterie si on n'écoute plus de musique
+        if (ghostAudioRef.current) {
+          ghostAudioRef.current.pause();
+        }
       }
     }
   }, [status]);
@@ -171,6 +184,14 @@ export function Player() {
       zIndex: 1, 
     }}>
       <div ref={playerContainerRef} />
+      
+      {/* 🟢 L'AUDIO FANTÔME : Un fichier son silencieux en base64 */}
+      <audio
+        ref={ghostAudioRef}
+        src="data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA"
+        loop
+        playsInline
+      />
     </div>
   );
 }
