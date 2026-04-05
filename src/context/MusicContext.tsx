@@ -76,53 +76,22 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   const repeatModeRef = useRef<"off" | "all" | "one">("off");
   const playHistoryRef = useRef<string[]>([]);
   const currentTimeRef = useRef(0);
+
+  // 🟢 Cache videoId → persisté dans localStorage (permanent)
   const ytCacheRef = useRef<Record<string, string>>({});
+
+  // 🟢 Cache videoId → audioUrl → en mémoire uniquement (les URLs Invidious expirent)
+  // On ne persiste PAS les audioUrls : elles sont valides ~6h, on en récupère
+  // une fraîche à chaque session ou si le chargement échoue.
+  const audioUrlCacheRef = useRef<Record<string, string>>({});
+
   const listenAccumulatorRef = useRef(0);
   const lastPlayedSecondsRef = useRef(0);
-
-  // 🟢 FIX 3 — Web Audio API pour maintenir la session audio active sur iOS
-  // Bien plus fiable que le ghost audio WAV silencieux que le système peut détecter et couper.
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const oscillatorRef = useRef<OscillatorNode | null>(null);
-  const gainRef = useRef<GainNode | null>(null);
-
-  // 🟢 FIX 3 — unlockAudio utilise désormais Web Audio API
-  const unlockAudio = useCallback((videoId?: string) => {
-    if (typeof window === "undefined") return;
-
-    try {
-      if (!audioContextRef.current) {
-        // Création du contexte audio avec un oscillateur quasi-silencieux
-        // iOS ne peut pas détecter et couper un vrai signal audio (même imperceptible)
-        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-        if (AudioCtx) {
-          audioContextRef.current = new AudioCtx();
-          const osc = audioContextRef.current.createOscillator();
-          const gain = audioContextRef.current.createGain();
-          gain.gain.value = 0.001; // Quasi-silencieux mais non nul → iOS ne peut pas le couper
-          osc.connect(gain);
-          gain.connect(audioContextRef.current.destination);
-          osc.start();
-          oscillatorRef.current = osc;
-          gainRef.current = gain;
-        }
-      } else if (audioContextRef.current.state === "suspended") {
-        // Le contexte a été suspendu (app mise en arrière-plan) → on le relance
-        audioContextRef.current.resume();
-      }
-    } catch (e) {
-      // Fallback silencieux si Web Audio API non disponible
-      console.warn("Web Audio API non disponible :", e);
-    }
-
-    window.dispatchEvent(new CustomEvent("iosUnlock", { detail: { videoId } }));
-  }, []);
 
   useEffect(() => {
     try {
       let currentCache = {};
       const savedCache = localStorage.getItem("stream_yt_cache");
-
       if (savedCache) {
         const rawCache = JSON.parse(savedCache);
         for (const key in rawCache) {
@@ -142,12 +111,10 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
         const parsedTrack = JSON.parse(savedTrack);
         setCurrentTrack(parsedTrack);
         currentTrackIdRef.current = parsedTrack.id;
-        const cachedVideoId = currentCache[parsedTrack.id];
-        if (isValidYTId(cachedVideoId)) {
-          setPlayingUrl(`https://www.youtube.com/watch?v=${cachedVideoId}`);
-        } else {
-          setPlayingUrl(null);
-        }
+        // 🟢 On ne restaure PAS playingUrl ici : les audioUrls Invidious expirent.
+        // La piste s'affichera dans le mini player mais sera en état "idle".
+        // L'utilisateur appuie sur play → on récupère une URL fraîche.
+        setPlayingUrl(null);
       }
 
       const savedQueue = localStorage.getItem("houee_last_queue");
@@ -281,9 +248,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       ];
     }
     const todayIndex = stats.findIndex((s: any) => s.day === todayStr);
-    if (todayIndex !== -1) {
-      stats[todayIndex].minutes += 1;
-    }
+    if (todayIndex !== -1) stats[todayIndex].minutes += 1;
     localStorage.setItem("dailyStats", JSON.stringify(stats));
     window.dispatchEvent(new Event("statsUpdated"));
   }, [checkWeekRollover]);
@@ -310,7 +275,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     if ('mediaSession' in navigator && navigator.mediaSession.setPositionState && duration > 0) {
       try {
         navigator.mediaSession.setPositionState({
-          duration: duration,
+          duration,
           playbackRate: 1,
           position: currentPlayed,
         });
@@ -344,6 +309,10 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       .then(data => {
         if (data.videoId && isValidYTId(data.videoId)) {
           saveToCache(track.id, data.videoId);
+          // 🟢 On mémorise aussi l'audioUrl en mémoire si disponible
+          if (data.audioUrl) {
+            audioUrlCacheRef.current[data.videoId] = data.audioUrl;
+          }
         }
       })
       .catch(() => {});
@@ -383,19 +352,23 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     return () => clearTimeout(syncTimeout);
   }, [user, currentTrack, status]);
 
+  // 🟢 CŒUR DU FIX : loadAndPlayUrl utilise maintenant des URLs audio directes
+  // au lieu de l'iframe YouTube → background iOS natif, aucun hack nécessaire.
   const loadAndPlayUrl = useCallback(async (track: Track) => {
+    // Stoppe les previews en cours
     if (typeof document !== "undefined") {
-      // 🟢 FIX 1 & 2 — On exclut explicitement le ghost audio du cleanup.
-      // Avant, querySelectorAll('audio') tuait aussi l'élément id="ghost-audio",
-      // ce qui coupait la session audio iOS à chaque changement de piste.
       document.querySelectorAll('audio').forEach(audio => {
-        if (audio.id === 'ghost-audio') return; // ← PROTECTION CRITIQUE
-        audio.pause();
-        audio.removeAttribute('src');
-        audio.load();
+        // On ne touche pas au <audio> du Player (géré par Player.tsx lui-même)
+        // On arrête uniquement les previews Deezer des pages de recherche
+        if (!audio.hasAttribute('data-player')) {
+          audio.pause();
+          audio.removeAttribute('src');
+          audio.load();
+        }
       });
       window.dispatchEvent(new Event('stopPreview'));
     }
+
     setStatus("loading");
     setCurrentTrack(track);
     currentTrackIdRef.current = track.id;
@@ -403,24 +376,60 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     syncDbStats();
     lastPlayedSecondsRef.current = 0;
     currentTimeRef.current = 0;
-    const cachedId = ytCacheRef.current[track.id];
-    if (cachedId && isValidYTId(cachedId)) {
-      unlockAudio(cachedId); 
-      setPlayingUrl(`https://www.youtube.com/watch?v=${cachedId}`);
-      setStatus("playing");
-      prefetchNextLogic();
-      return;
+
+    const cachedVideoId = ytCacheRef.current[track.id];
+
+    // CAS 1 : On a un videoId en cache
+    if (cachedVideoId && isValidYTId(cachedVideoId)) {
+      // Sous-cas A : On a aussi l'audioUrl en mémoire → on joue immédiatement
+      const cachedAudioUrl = audioUrlCacheRef.current[cachedVideoId];
+      if (cachedAudioUrl) {
+        setPlayingUrl(cachedAudioUrl);
+        setStatus("playing");
+        prefetchNextLogic();
+        return;
+      }
+
+      // Sous-cas B : On a le videoId mais pas d'audioUrl en mémoire
+      // → on récupère une URL fraîche depuis Invidious (rapide, ~1-2s)
+      try {
+        const res = await fetch(`/api/youtube?videoId=${cachedVideoId}`);
+        const data = await res.json();
+        if (data.audioUrl) {
+          audioUrlCacheRef.current[cachedVideoId] = data.audioUrl;
+          setPlayingUrl(data.audioUrl);
+          setStatus("playing");
+          prefetchNextLogic();
+          return;
+        }
+      } catch (e) {
+        console.warn("Impossible de récupérer l'audioUrl pour le cache, relance la recherche complète");
+      }
     }
-    unlockAudio();
+
+    // CAS 2 : Pas de cache → recherche complète (videoId + audioUrl en une seule requête)
     try {
       const query = `${track.artist} ${track.title} audio -"full album" -"1 hour" -"live" -"compilation"`;
       const res = await fetch(`/api/youtube?q=${encodeURIComponent(query)}`);
       const data = await res.json();
+
       if (data.videoId && isValidYTId(data.videoId)) {
         saveToCache(track.id, data.videoId);
-        setPlayingUrl(`https://www.youtube.com/watch?v=${data.videoId}`);
-        setStatus("playing");
-        prefetchNextLogic();
+
+        if (data.audioUrl) {
+          // 🟢 CAS IDÉAL : On a l'URL audio directe → <audio> natif → background iOS ✓
+          audioUrlCacheRef.current[data.videoId] = data.audioUrl;
+          setPlayingUrl(data.audioUrl);
+          setStatus("playing");
+          prefetchNextLogic();
+        } else {
+          // 🟡 FALLBACK : Invidious n'a pas pu fournir l'audioUrl
+          // On utilise l'URL YouTube (pas de background iOS, mais au moins ça joue)
+          console.warn("audioUrl indisponible, fallback YouTube iframe");
+          setPlayingUrl(`https://www.youtube.com/watch?v=${data.videoId}`);
+          setStatus("playing");
+          prefetchNextLogic();
+        }
       } else {
         setStatus("idle");
       }
@@ -428,7 +437,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       console.error("Erreur API :", error);
       setStatus("idle");
     }
-  }, [prefetchNextLogic, syncDbStats, updateTopTracks, saveToCache, unlockAudio]);
+  }, [prefetchNextLogic, syncDbStats, updateTopTracks, saveToCache]);
 
   const playTrack = useCallback(async (track: Track, newQueue?: Track[]) => {
     if (newQueue && newQueue.length > 0) {
@@ -450,10 +459,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
 
   const playRadioTrack = useCallback(async () => {
     const lastTrack = currentTrack;
-    if (!lastTrack) {
-      setStatus("idle");
-      return;
-    }
+    if (!lastTrack) { setStatus("idle"); return; }
     try {
       setStatus("loading");
       const res = await fetch(`/api/radio?id=${lastTrack.id}&artist=${encodeURIComponent(lastTrack.artist)}`);
@@ -485,21 +491,14 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       }
     };
     if (q.length === 0) {
-      if (currentTrackIdRef.current) {
-        handlePlaylistEnd();
-      } else {
-        setStatus("idle");
-      }
+      currentTrackIdRef.current ? handlePlaylistEnd() : setStatus("idle");
       return;
     }
     let nextTrack: Track | undefined;
     if (isShuffleRef.current) {
       const unplayed = q.filter(t => !playHistoryRef.current.includes(t.id));
       if (unplayed.length === 0) {
-        if (repeatModeRef.current === "off") {
-          handlePlaylistEnd();
-          return;
-        }
+        if (repeatModeRef.current === "off") { handlePlaylistEnd(); return; }
         nextTrack = q[Math.floor(Math.random() * q.length)];
         playHistoryRef.current = [nextTrack.id];
       } else {
@@ -521,29 +520,20 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
         }
       }
     }
-    if (nextTrack) {
-      loadAndPlayUrl(nextTrack);
-    }
+    if (nextTrack) loadAndPlayUrl(nextTrack);
   }, [loadAndPlayUrl, playRadioTrack]);
 
   const playPrev = useCallback(() => {
     const q = queueRef.current;
-    if (currentTimeRef.current > 3) {
-      setSeekRequest(0);
-      return;
-    }
-    if (q.length === 0) {
-      setSeekRequest(0);
-      return;
-    }
+    if (currentTimeRef.current > 3) { setSeekRequest(0); return; }
+    if (q.length === 0) { setSeekRequest(0); return; }
     const currentIndex = q.findIndex(t => t.id === currentTrackIdRef.current);
     if (currentIndex > 0) {
       const prevTrack = q[currentIndex - 1];
       playHistoryRef.current.push(prevTrack.id);
       loadAndPlayUrl(prevTrack);
     } else {
-      const prevTrack = q[q.length - 1];
-      loadAndPlayUrl(prevTrack);
+      loadAndPlayUrl(q[q.length - 1]);
     }
   }, [loadAndPlayUrl]);
 
@@ -560,7 +550,6 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const togglePlayPause = useCallback(() => {
-    unlockAudio(); 
     if (status === "playing") {
       setStatus("paused");
     } else {
@@ -570,7 +559,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
         setStatus("playing");
       }
     }
-  }, [status, playingUrl, currentTrack, loadAndPlayUrl, unlockAudio]);
+  }, [status, playingUrl, currentTrack, loadAndPlayUrl]);
 
   const seek = useCallback((time: number) => {
     setSeekRequest(time);
@@ -584,15 +573,15 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     if (repeatModeRef.current === "one" && currentTrackIdRef.current) {
       const q = queueRef.current;
       const trackToReplay = q.find(t => t.id === currentTrackIdRef.current) || currentTrack;
-      if (trackToReplay) {
-        loadAndPlayUrl(trackToReplay);
-        return;
-      }
+      if (trackToReplay) { loadAndPlayUrl(trackToReplay); return; }
     }
     playNext();
   }, [playNext, currentTrack, loadAndPlayUrl]);
 
-  // 🟢 MEDIA SESSION (Centre de contrôle iOS/Android)
+  // 🟢 MEDIA SESSION — Centre de contrôle iOS/Android (lock screen)
+  // Avec un <audio> natif, iOS reconnaît automatiquement la lecture et affiche
+  // les contrôles sur l'écran de verrouillage sans configuration supplémentaire.
+  // La MediaSession API permet de personnaliser les métadonnées et les boutons.
   useEffect(() => {
     if ('mediaSession' in navigator && currentTrack) {
       navigator.mediaSession.metadata = new MediaMetadata({
@@ -610,20 +599,18 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
 
       navigator.mediaSession.playbackState = status === "playing" ? "playing" : "paused";
 
-      const actionHandlers = [
+      const actionHandlers: [MediaSessionAction, () => void][] = [
         ['play', togglePlayPause],
         ['pause', () => setStatus("paused")],
         ['previoustrack', playPrev],
         ['nexttrack', playNext],
-        ['stop', () => { setStatus("idle"); setPlayingUrl(null); }]
+        ['stop', () => { setStatus("idle"); setPlayingUrl(null); }],
       ];
 
       for (const [action, handler] of actionHandlers) {
         try {
           navigator.mediaSession.setActionHandler(action, handler);
-        } catch (error) {
-          console.warn(`L'action "${action}" n'est pas supportée.`);
-        }
+        } catch (e) {}
       }
     }
   }, [currentTrack, status, playNext, playPrev, togglePlayPause]);
@@ -632,7 +619,8 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     currentTrack, status, playingUrl, duration, volume,
     isFullScreen, seekRequest, queue, isShuffle, repeatMode,
     sleepMode: sleepModeState, sleepSeconds, setSleepMode,
-    playTrack, playNext, playPrev, toggleShuffle, toggleRepeat, togglePlayPause, setVolume, seek,
+    playTrack, playNext, playPrev, toggleShuffle, toggleRepeat,
+    togglePlayPause, setVolume, seek,
     onProgress: handleProgress,
     onDuration: setDuration,
     onEnded: handleEnded,
@@ -642,7 +630,8 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     currentTrack, status, playingUrl, duration, volume,
     isFullScreen, seekRequest, queue, isShuffle, repeatMode,
     sleepModeState, sleepSeconds,
-    playTrack, playNext, playPrev, setSleepMode, toggleShuffle, toggleRepeat, togglePlayPause, seek, handleProgress, handleEnded, clearSeekRequest,
+    playTrack, playNext, playPrev, setSleepMode, toggleShuffle, toggleRepeat,
+    togglePlayPause, seek, handleProgress, handleEnded, clearSeekRequest,
     isMusicLoaded
   ]);
 

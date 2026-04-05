@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from '@supabase/supabase-js';
 
 export const runtime = "nodejs";
-export const maxDuration = 10; 
+export const maxDuration = 20;
 
 const INVIDIOUS_INSTANCES = [
   "https://inv.nadeko.net",
@@ -16,23 +16,16 @@ const PIPED_INSTANCES = [
   "https://api.piped.projectsegfau.lt"
 ];
 
-// 🟢 INITIALISATION SUPABASE POUR LE COMPTEUR
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// Fonction qui ajoute 101 tokens au jour actuel
 async function incrementTokenUsage() {
   try {
-    const today = new Date().toISOString().split('T')[0]; // Format YYYY-MM-DD
-    
-    // 1. On regarde combien on a consommé aujourd'hui
+    const today = new Date().toISOString().split('T')[0];
     const { data } = await supabase.from('api_usage').select('tokens').eq('date', today).single();
     const currentTokens = data ? data.tokens : 0;
-    
-    // 2. On ajoute 101 (100 pour la recherche + 1 pour les détails de la vidéo)
     await supabase.from('api_usage').upsert({ date: today, tokens: currentTokens + 101 });
-    console.log(`📊 Tokens mis à jour : ${currentTokens + 101} / 10000`);
   } catch (err) {
     console.error("Erreur mise à jour compteur tokens", err);
   }
@@ -54,18 +47,44 @@ function fetchWithTimeout(url: string, ms: number, options: RequestInit = {}) {
   return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer));
 }
 
+// 🟢 NOUVEAU : Récupère l'URL audio directe depuis Invidious pour un videoId connu.
+// Utilise local=true pour que l'URL soit proxiée par Invidious → pas de CORS.
+// C'est ce qui permet à un <audio> natif de jouer le son en arrière-plan sur iOS.
+async function getAudioUrl(videoId: string, timeoutMs: number): Promise<string | null> {
+  for (const instance of INVIDIOUS_INSTANCES) {
+    try {
+      const url = `${instance}/api/v1/videos/${videoId}?local=true&fields=adaptiveFormats`;
+      const res = await fetchWithTimeout(url, timeoutMs);
+      if (!res.ok) continue;
+
+      const data = await res.json();
+      const formats: any[] = data.adaptiveFormats || [];
+
+      // On filtre les formats audio uniquement, on prend le meilleur bitrate
+      const audioFormats = formats
+        .filter((f) => f.type?.startsWith("audio/"))
+        .sort((a, b) => parseInt(b.bitrate || "0") - parseInt(a.bitrate || "0"));
+
+      if (audioFormats.length > 0 && audioFormats[0].url) {
+        console.log(`✅ Audio URL depuis ${instance} : itag ${audioFormats[0].itag}`);
+        return audioFormats[0].url;
+      }
+    } catch (e) {
+      // Instance down ou timeout, on essaie la suivante
+    }
+  }
+  return null;
+}
+
 async function searchInvidious(q: string, timeoutMs: number): Promise<string | null> {
   for (const instance of INVIDIOUS_INSTANCES) {
     try {
       const url = `${instance}/api/v1/search?q=${encodeURIComponent(q)}&type=video&fields=videoId,lengthSeconds`;
       const res = await fetchWithTimeout(url, timeoutMs);
-
       if (!res.ok) continue;
       const results = await res.json();
       if (!Array.isArray(results) || results.length === 0) continue;
-
       const best = results.find((v: any) => isGoodDuration(v.lengthSeconds)) ?? results[0];
-
       if (best?.videoId) {
         console.log(`✅ Invidious (${instance}): ${best.videoId}`);
         return best.videoId;
@@ -80,15 +99,11 @@ async function searchPiped(q: string, timeoutMs: number): Promise<string | null>
     try {
       const url = `${instance}/search?q=${encodeURIComponent(q)}&filter=videos`;
       const res = await fetchWithTimeout(url, timeoutMs);
-
       if (!res.ok) continue;
       const data = await res.json();
       const results = data.items;
-      
       if (!Array.isArray(results) || results.length === 0) continue;
-
       const best = results.find((v: any) => isGoodDuration(v.duration)) ?? results[0];
-
       if (best?.url) {
         const videoId = best.url.split("?v=")[1];
         if (videoId) {
@@ -110,10 +125,8 @@ async function scrapeYouTubeDirect(q: string, timeoutMs: number): Promise<string
         'Accept-Language': 'en-US,en;q=0.9',
       }
     });
-
     if (!res.ok) return null;
     const html = await res.text();
-
     const match = html.match(/"videoId":"([a-zA-Z0-9_-]{11})"/);
     if (match && match[1]) {
       console.log(`✅ Scraping YouTube Direct : ${match[1]}`);
@@ -133,33 +146,21 @@ async function searchYouTubeAPI(q: string, apiKey: string, timeoutMs: number): P
     searchUrl.searchParams.set("maxResults", "5");
     searchUrl.searchParams.set("q", q);
     searchUrl.searchParams.set("key", apiKey);
-
     const res = await fetchWithTimeout(searchUrl.toString(), timeoutMs);
     const data = await res.json();
-
-    if (!res.ok || !data.items?.length) {
-      console.error("❌ YouTube API:", data.error?.message);
-      return null;
-    }
-
+    if (!res.ok || !data.items?.length) return null;
     const videoIds = data.items.map((i: any) => i.id.videoId).join(",");
     const detailUrl = new URL("https://www.googleapis.com/youtube/v3/videos");
     detailUrl.searchParams.set("part", "contentDetails");
     detailUrl.searchParams.set("id", videoIds);
     detailUrl.searchParams.set("key", apiKey);
-
     const detailRes = await fetchWithTimeout(detailUrl.toString(), timeoutMs);
     const detailData = await detailRes.json();
-
     const withDurations = (detailData.items ?? []).map((item: any) => ({
       videoId: item.id,
       seconds: parseDuration(item.contentDetails.duration),
     }));
-
-    // 🟢 DÉCLENCHEMENT DU COMPTEUR
-    // On vient de faire 2 requêtes Google (Search + Details), on note ça dans la DB !
     await incrementTokenUsage();
-
     const best = withDurations.find((v: any) => isGoodDuration(v.seconds)) ?? withDurations[0];
     return best?.videoId ?? null;
   } catch (e) {
@@ -172,45 +173,53 @@ export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const q = searchParams.get("q");
+    const directVideoId = searchParams.get("videoId"); // 🟢 NOUVEAU : pour récupérer l'audioUrl d'un videoId connu
     const isBg = searchParams.get("bg") === "true";
+
+    // 🟢 MODE DIRECT : On connaît déjà le videoId, on veut juste l'URL audio fraîche
+    if (directVideoId) {
+      console.log(`🎵 Récupération audio pour videoId connu : ${directVideoId}`);
+      const audioUrl = await getAudioUrl(directVideoId, 5000);
+      if (audioUrl) {
+        return NextResponse.json({ audioUrl });
+      }
+      return NextResponse.json({ error: "Audio URL non disponible" }, { status: 404 });
+    }
 
     if (!q) return NextResponse.json({ error: "Recherche vide" }, { status: 400 });
 
     console.log(`🔍 Recherche globale: ${q} | Mode arrière-plan: ${isBg}`);
 
-    const invTimeout = isBg ? 3500 : 2000;
-    const pipedTimeout = isBg ? 3500 : 2000;
-    const scrapeTimeout = isBg ? 2000 : 2000;
+    // ÉTAPE 1 : Trouver le videoId (logique existante inchangée)
+    let videoId: string | null = null;
 
-    const invidiousId = await searchInvidious(q, invTimeout);
-    if (invidiousId) return NextResponse.json({ videoId: invidiousId });
+    videoId = await searchInvidious(q, isBg ? 3500 : 2000);
+    if (!videoId) videoId = await searchPiped(q, isBg ? 3500 : 2000);
+    if (!videoId) videoId = await scrapeYouTubeDirect(q, 2000);
 
-    const pipedId = await searchPiped(q, pipedTimeout);
-    if (pipedId) return NextResponse.json({ videoId: pipedId });
-
-    const scrapedId = await scrapeYouTubeDirect(q, scrapeTimeout);
-    if (scrapedId) return NextResponse.json({ videoId: scrapedId });
-
-    if (isBg) {
-      console.warn("⚠️ Toutes les méthodes gratuites ont échoué en arrière-plan. Utilisation Google API bloquée pour sauver les tokens.");
-      return NextResponse.json({ error: "Aucun résultat gratuit (Tokens protégés)" }, { status: 404 });
+    if (!videoId && !isBg) {
+      const apiKey = process.env.YOUTUBE_API_KEY;
+      if (apiKey) {
+        videoId = await searchYouTubeAPI(q, apiKey, 4000);
+      }
     }
 
-    console.warn("⚠️ Toutes les méthodes gratuites ont échoué, fallback sur l'API Google...");
-
-    const apiKey = process.env.YOUTUBE_API_KEY;
-    if (!apiKey) {
-      console.error("❌ YOUTUBE_API_KEY manquante");
-      return NextResponse.json({ error: "Aucune source disponible" }, { status: 503 });
+    if (!videoId) {
+      return NextResponse.json({ error: "Aucun résultat trouvé" }, { status: 404 });
     }
 
-    const ytId = await searchYouTubeAPI(q, apiKey, 4000);
-    if (ytId) {
-      console.log(`✅ YouTube API Google : ${ytId}`);
-      return NextResponse.json({ videoId: ytId });
+    // ÉTAPE 2 : 🟢 NOUVEAU — Récupérer l'URL audio directe pour ce videoId
+    // C'est cette URL qui sera jouée par le <audio> natif → background iOS natif
+    const audioUrl = await getAudioUrl(videoId, 4000);
+
+    if (audioUrl) {
+      console.log(`✅ Réponse complète : videoId=${videoId} + audioUrl OK`);
+      return NextResponse.json({ videoId, audioUrl });
     }
 
-    return NextResponse.json({ error: "Aucun résultat trouvé" }, { status: 404 });
+    // Fallback : on retourne au moins le videoId (le Player utilisera l'iframe YouTube)
+    console.warn(`⚠️ audioUrl non disponible, fallback iframe pour videoId=${videoId}`);
+    return NextResponse.json({ videoId });
 
   } catch (e) {
     console.error("❌ Erreur globale /api/youtube:", e);
