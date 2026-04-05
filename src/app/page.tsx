@@ -11,7 +11,7 @@ import { supabase } from "@/lib/supabase";
 import { motion, AnimatePresence, useAnimation } from "framer-motion";
 import { 
   Calendar, Flame, Disc3, ListMusic, Play, PlayCircle, 
-  PauseCircle, Plus, ArrowLeft, Clock, ExternalLink, Newspaper, Music, Radio, Mic2
+  PauseCircle, Plus, ArrowLeft, Clock, ExternalLink, Newspaper, Music, Radio, Mic2, Link2
 } from "lucide-react"; 
 import Link from "next/link";
 import { AddToPlaylistModal } from "@/components/ui/AddToPlaylistModal";
@@ -79,8 +79,6 @@ export default function HomePage() {
         const res = await fetch(`/api/news`);
         const data = await res.json();
         if (data.news) {
-          // 🟢 LA CORRECTION : On greffe un 'styleIndex' permanent à chaque article
-          // pour que sa couleur voyage avec lui lors du swipe.
           const newsWithStyles = data.news.map((item, index) => ({
             ...item,
             styleIndex: index
@@ -257,7 +255,6 @@ export default function HomePage() {
     return cleanText;
   };
 
-  // 🟢 On utilise l'index permanent pour attribuer la couleur
   const getCardStyle = (index) => {
     const gradients = [
       "bg-gradient-to-br from-purple-900 via-[#121212] to-black",
@@ -269,7 +266,6 @@ export default function HomePage() {
     return gradients[index % gradients.length];
   };
 
-  // 🟢 On utilise l'index permanent pour attribuer l'icône
   const getWatermarkIcon = (index) => {
     const icons = [Newspaper, Music, Flame, Radio, Mic2];
     const IconComponent = icons[index % icons.length];
@@ -311,12 +307,25 @@ export default function HomePage() {
           >
             <div className="max-w-5xl mx-auto space-y-10">
               <section>
-                <motion.h1 
-                  initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} 
-                  className="text-3xl font-black mb-6 tracking-tight"
-                >
-                  {greeting}
-                </motion.h1>
+                
+                {/* 🟢 Le bouton magique est ici, aligné avec le "Bonjour" */}
+                <div className="flex items-center justify-between mb-6">
+                  <motion.h1 
+                    initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} 
+                    className="text-3xl font-black tracking-tight"
+                  >
+                    {greeting}
+                  </motion.h1>
+                  
+                  <motion.button
+                    initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
+                    onClick={() => window.dispatchEvent(new Event("triggerImportModal"))}
+                    className="flex items-center gap-2 bg-[#1db954] text-black px-4 py-2.5 rounded-full font-black text-xs uppercase tracking-wide hover:scale-105 active:scale-95 transition-transform shadow-[0_0_15px_rgba(29,185,84,0.3)]"
+                  >
+                    <Link2 className="w-4 h-4" />
+                    Lien TikTok
+                  </motion.button>
+                </div>
 
                 {friendsActivity.length > 0 && (
                   <div className="mb-6">
@@ -486,7 +495,6 @@ export default function HomePage() {
                       const finalSnippet = getCleanSnippet(post);
                       const isFront = i === 0;
                       
-                      // 🟢 On utilise l'ID de style permanent pour que la couleur reste attachée à la carte
                       const styleId = post.styleIndex !== undefined ? post.styleIndex : i;
                       const cardGradient = getCardStyle(styleId);
 
@@ -506,7 +514,6 @@ export default function HomePage() {
                           onDragEnd={handleDragEnd}
                           className={`absolute w-full h-[380px] rounded-3xl overflow-hidden shadow-[0_10px_30px_rgba(0,0,0,0.8)] border border-white/10 ${cardGradient} ${isFront ? 'cursor-grab active:cursor-grabbing' : ''}`}
                         >
-                          {/* 🟢 L'icône garde elle aussi son styleIndex permanent */}
                           {getWatermarkIcon(styleId)}
 
                           <div className="absolute inset-0 p-6 flex flex-col justify-between pointer-events-none">

@@ -12,7 +12,7 @@ export function Player() {
   const ytPlayerInstance = useRef(null);
   const progressInterval = useRef(null);
 
-  // 🟢 LA RÉFÉRENCE DE L'AUDIO FANTÔME
+  // 🟢 LA RÉFÉRENCE DE L'AUDIO FANTÔME (Notre bouclier anti-veille)
   const ghostAudioRef = useRef<HTMLAudioElement>(null);
   
   const isReady = useRef(false);
@@ -42,7 +42,7 @@ export function Player() {
           fs: 0, 
           rel: 0, 
           modestbranding: 1,
-          playsinline: 1,
+          playsinline: 1, // Crucial pour iOS
           enablejsapi: 1,
           origin: typeof window !== "undefined" ? window.location.origin : "http://localhost:3000"
         },
@@ -112,10 +112,10 @@ export function Player() {
         player.playVideo();
       }
 
-      // 🟢 On s'assure d'amorcer l'audio fantôme dès le premier clic de l'utilisateur
+      // 🟢 CORRECTION MAJEURE ICI : On lance l'audio fantôme ET ON LE LAISSE TOURNER !
+      // Avant, tu avais ghostAudioRef.current.pause() juste après, ce qui tuait le hack instantanément.
       if (ghostAudioRef.current) {
         ghostAudioRef.current.play().catch(() => {});
-        ghostAudioRef.current.pause();
       }
     };
 
@@ -148,7 +148,7 @@ export function Player() {
         }
       } else if (status === "paused" || status === "idle") {
         ytPlayerInstance.current.pauseVideo();
-        // On met en pause pour économiser la batterie si on n'écoute plus de musique
+        // On met en pause pour économiser la batterie SEULEMENT SI on n'écoute plus de musique
         if (ghostAudioRef.current) {
           ghostAudioRef.current.pause();
         }
@@ -169,6 +169,18 @@ export function Player() {
     }
   }, [seekRequest, clearSeekRequest]);
 
+  // 🟢 BONUS SÉCURITÉ : Forcer la reconnexion audio si le téléphone met brièvement l'app en pause
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (!document.hidden && status === "playing" && ytPlayerInstance.current?.playVideo) {
+        ytPlayerInstance.current.playVideo();
+        if (ghostAudioRef.current) ghostAudioRef.current.play().catch(()=>{});
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [status]);
+
   if (!isClient) return null;
 
   return (
@@ -185,7 +197,7 @@ export function Player() {
     }}>
       <div ref={playerContainerRef} />
       
-      {/* 🟢 L'AUDIO FANTÔME : Un fichier son silencieux en base64 */}
+      {/* 🟢 L'AUDIO FANTÔME : Un fichier son silencieux en base64 qui tourne en boucle */}
       <audio
         ref={ghostAudioRef}
         src="data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA"

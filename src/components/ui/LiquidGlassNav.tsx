@@ -3,7 +3,7 @@
 
 import React, { useState, useRef, useEffect, useCallback, useTransition } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { Home, Search, ListMusic, Compass } from "lucide-react"; // 🟢 J'ai retiré l'icône X
+import { Home, Search, ListMusic, Compass } from "lucide-react"; 
 import { motion, AnimatePresence, LayoutGroup, useMotionValue, useSpring, useTransform } from "framer-motion";
 import { cn } from "@/lib/utils";
 import GlassSurface from "./GlassSurface";
@@ -227,7 +227,6 @@ export function LiquidGlassNav() {
     pointerDownPos.current = null; 
     (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
     
-    // 🟢 CORRECTION DU BUG "PLAYLIST" : On empêche le calcul et la navigation si on est en mode recherche !
     if (isPending || isSearchActive) return;
 
     const idx  = computeIndex(e.clientX);
@@ -306,8 +305,9 @@ export function LiquidGlassNav() {
           exit={{    y: 120, opacity: 0 }}
           transition={{ type: "spring", stiffness: 370, damping: 32 }}
           className="fixed left-1/2 -translate-x-1/2 w-[92%] max-w-md z-[100] select-none"
+          // 🟢 LA CORRECTION EST ICI : on ajoute env(safe-area-inset-bottom)
           style={{ 
-            bottom: "calc(24px + var(--keyboard-height, 0px))",
+            bottom: "calc(16px + env(safe-area-inset-bottom) + var(--keyboard-height, 0px))",
             transition: "bottom 0.15s ease-out" 
           }}
         >
@@ -417,7 +417,6 @@ export function LiquidGlassNav() {
                         autoCorrect="off"
                         spellCheck="false"
                       />
-                      {/* 🟢 La croix "X" inutile a été supprimée ici */}
                     </motion.div>
                   )}
                 </AnimatePresence>
