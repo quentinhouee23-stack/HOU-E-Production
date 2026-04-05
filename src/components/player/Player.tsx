@@ -42,7 +42,7 @@ export function Player() {
           fs: 0, 
           rel: 0, 
           modestbranding: 1,
-          playsinline: 1, // Crucial pour iOS
+          playsinline: 1,
           enablejsapi: 1,
           origin: typeof window !== "undefined" ? window.location.origin : "http://localhost:3000"
         },
@@ -112,8 +112,7 @@ export function Player() {
         player.playVideo();
       }
 
-      // 🟢 CORRECTION MAJEURE ICI : On lance l'audio fantôme ET ON LE LAISSE TOURNER !
-      // Avant, tu avais ghostAudioRef.current.pause() juste après, ce qui tuait le hack instantanément.
+      // 🟢 On lance l'audio fantôme et on le laisse tourner
       if (ghostAudioRef.current) {
         ghostAudioRef.current.play().catch(() => {});
       }
@@ -137,18 +136,16 @@ export function Player() {
     }
   }, [videoId]);
 
-  // 🟢 LE HACK : SYNCHRONISATION DU LECTEUR ET DE L'AUDIO FANTÔME
+  // 🟢 SYNCHRONISATION DU LECTEUR ET DE L'AUDIO FANTÔME
   useEffect(() => {
     if (ytPlayerInstance.current && ytPlayerInstance.current.playVideo) {
       if (status === "playing") {
         ytPlayerInstance.current.playVideo();
-        // On active le son silencieux pour empêcher le téléphone de tuer l'onglet
         if (ghostAudioRef.current) {
           ghostAudioRef.current.play().catch(() => console.log("Ghost audio autoplay blocked"));
         }
       } else if (status === "paused" || status === "idle") {
         ytPlayerInstance.current.pauseVideo();
-        // On met en pause pour économiser la batterie SEULEMENT SI on n'écoute plus de musique
         if (ghostAudioRef.current) {
           ghostAudioRef.current.pause();
         }
@@ -169,12 +166,12 @@ export function Player() {
     }
   }, [seekRequest, clearSeekRequest]);
 
-  // 🟢 BONUS SÉCURITÉ : Forcer la reconnexion audio si le téléphone met brièvement l'app en pause
+  // 🟢 Forcer la reconnexion audio si le téléphone met brièvement l'app en pause
   useEffect(() => {
     const handleVisibility = () => {
       if (!document.hidden && status === "playing" && ytPlayerInstance.current?.playVideo) {
         ytPlayerInstance.current.playVideo();
-        if (ghostAudioRef.current) ghostAudioRef.current.play().catch(()=>{});
+        if (ghostAudioRef.current) ghostAudioRef.current.play().catch(() => {});
       }
     };
     document.addEventListener("visibilitychange", handleVisibility);
@@ -197,9 +194,16 @@ export function Player() {
     }}>
       <div ref={playerContainerRef} />
       
-      {/* 🟢 L'AUDIO FANTÔME : Un fichier son silencieux en base64 qui tourne en boucle */}
+      {/*
+        🟢 L'AUDIO FANTÔME
+        - L'id="ghost-audio" est CRITIQUE : il permet au cleanup de MusicContext
+          de l'exclure et de ne jamais le tuer lors d'un changement de piste.
+        - Sans cet id, loadAndPlayUrl() tue cet élément à chaque chanson
+          → session audio coupée → lecture stoppée en veille.
+      */}
       <audio
         ref={ghostAudioRef}
+        id="ghost-audio"
         src="data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA"
         loop
         playsInline

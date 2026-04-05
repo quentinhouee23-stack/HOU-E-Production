@@ -80,10 +80,41 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   const listenAccumulatorRef = useRef(0);
   const lastPlayedSecondsRef = useRef(0);
 
+  // 🟢 FIX 3 — Web Audio API pour maintenir la session audio active sur iOS
+  // Bien plus fiable que le ghost audio WAV silencieux que le système peut détecter et couper.
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const oscillatorRef = useRef<OscillatorNode | null>(null);
+  const gainRef = useRef<GainNode | null>(null);
+
+  // 🟢 FIX 3 — unlockAudio utilise désormais Web Audio API
   const unlockAudio = useCallback((videoId?: string) => {
     if (typeof window === "undefined") return;
-    const audio = new Audio("data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA");
-    audio.play().catch(() => {});
+
+    try {
+      if (!audioContextRef.current) {
+        // Création du contexte audio avec un oscillateur quasi-silencieux
+        // iOS ne peut pas détecter et couper un vrai signal audio (même imperceptible)
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioCtx) {
+          audioContextRef.current = new AudioCtx();
+          const osc = audioContextRef.current.createOscillator();
+          const gain = audioContextRef.current.createGain();
+          gain.gain.value = 0.001; // Quasi-silencieux mais non nul → iOS ne peut pas le couper
+          osc.connect(gain);
+          gain.connect(audioContextRef.current.destination);
+          osc.start();
+          oscillatorRef.current = osc;
+          gainRef.current = gain;
+        }
+      } else if (audioContextRef.current.state === "suspended") {
+        // Le contexte a été suspendu (app mise en arrière-plan) → on le relance
+        audioContextRef.current.resume();
+      }
+    } catch (e) {
+      // Fallback silencieux si Web Audio API non disponible
+      console.warn("Web Audio API non disponible :", e);
+    }
+
     window.dispatchEvent(new CustomEvent("iosUnlock", { detail: { videoId } }));
   }, []);
 
@@ -276,7 +307,6 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     const currentPlayed = state.playedSeconds || 0;
     currentTimeRef.current = currentPlayed;
 
-    // 🟢 MISE À JOUR DE LA POSITION DANS LA MEDIA SESSION (Centre de contrôle)
     if ('mediaSession' in navigator && navigator.mediaSession.setPositionState && duration > 0) {
       try {
         navigator.mediaSession.setPositionState({
@@ -355,7 +385,11 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
 
   const loadAndPlayUrl = useCallback(async (track: Track) => {
     if (typeof document !== "undefined") {
+      // 🟢 FIX 1 & 2 — On exclut explicitement le ghost audio du cleanup.
+      // Avant, querySelectorAll('audio') tuait aussi l'élément id="ghost-audio",
+      // ce qui coupait la session audio iOS à chaque changement de piste.
       document.querySelectorAll('audio').forEach(audio => {
+        if (audio.id === 'ghost-audio') return; // ← PROTECTION CRITIQUE
         audio.pause();
         audio.removeAttribute('src');
         audio.load();
@@ -558,10 +592,9 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     playNext();
   }, [playNext, currentTrack, loadAndPlayUrl]);
 
-  // 🟢 LOGIQUE BÉTON ARMÉ POUR LA MEDIA SESSION (ARRIÈRE-PLAN)
+  // 🟢 MEDIA SESSION (Centre de contrôle iOS/Android)
   useEffect(() => {
     if ('mediaSession' in navigator && currentTrack) {
-      // 1. Mise à jour des infos (Métadonnées)
       navigator.mediaSession.metadata = new MediaMetadata({
         title: currentTrack.title,
         artist: currentTrack.artist,
@@ -575,11 +608,8 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
         ]
       });
 
-      // 2. Synchronisation de l'état de lecture pour le système
-      // C'est ça qui empêche iOS de couper le son en veille !
       navigator.mediaSession.playbackState = status === "playing" ? "playing" : "paused";
 
-      // 3. Déclaration des actions (Contrôles physiques)
       const actionHandlers = [
         ['play', togglePlayPause],
         ['pause', () => setStatus("paused")],
