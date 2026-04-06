@@ -353,7 +353,6 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     
     unlockAudio();
 
-    // 1. Vérification du cache local
     const cachedVideoId = ytCacheRef.current[track.id];
     if (cachedVideoId && isValidYTId(cachedVideoId)) {
       const cachedAudioUrl = audioUrlCacheRef.current[cachedVideoId];
@@ -364,7 +363,6 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       
-      // Demander l'URL direct à Vercel si on a déjà l'ID
       try {
         const res = await fetch(`/api/youtube?videoId=${cachedVideoId}`);
         const data = await res.json();
@@ -378,10 +376,19 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       } catch (e) {}
     }
 
-    // 2. Recherche complète via notre API Vercel
     try {
       const query = `${track.artist} ${track.title} audio -"full album" -"1 hour" -"live" -"compilation"`;
       const res = await fetch(`/api/youtube?q=${encodeURIComponent(query)}`);
+      
+      // 🟢 DEBUG LOURD : On lit le statut exact du serveur
+      if (!res.ok) {
+         const errorText = await res.text();
+         alert(`Vercel a refusé avec le code ${res.status}.\nRéponse: ${errorText}`);
+         setStatus("idle");
+         // On ne skip plus automatiquement !
+         return;
+      }
+
       const data = await res.json();
       
       if (data.audioUrl) {
@@ -391,14 +398,16 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
         setStatus("playing");
         prefetchNextLogic();
       } else {
-        console.warn("❌ Aucun flux audio trouvé.");
+        // 🟢 DEBUG LOURD : Le JSON est valide mais vide
+        alert("Vercel a répondu OK, mais aucun lien audio n'a été trouvé. \nJSON: " + JSON.stringify(data));
         setStatus("idle");
-        setTimeout(() => playNext(), 2000); 
+        // On ne skip plus automatiquement !
       }
     } catch (error) {
-      console.error("Erreur API :", error);
+      // 🟢 DEBUG LOURD : L'appel réseau a crashé
+      alert("Erreur fatale de connexion Vercel : " + error.message);
       setStatus("idle");
-      setTimeout(() => playNext(), 2000); 
+      // On ne skip plus automatiquement !
     }
   }, [prefetchNextLogic, syncDbStats, updateTopTracks, saveToCache, unlockAudio]);
 
