@@ -392,7 +392,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
           return;
         }
       } catch (e) {
-        console.warn("Impossible de récupérer l'URL depuis Cobalt, on force une nouvelle recherche");
+        console.warn("Impossible de récupérer l'URL, recherche complète requise");
       }
     }
 
@@ -409,20 +409,22 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
           setStatus("playing");
           prefetchNextLogic();
         } else {
-          // Si on n'a vraiment pas d'audio, on passe au son suivant
+          console.warn("❌ Aucun flux audio disponible.");
           setStatus("idle");
-          playNext();
+          setTimeout(() => playNext(), 2000); // 🟢 FIX ANTI-BOUCLE INFINIE
         }
       } else {
+        console.warn("❌ Vidéo introuvable.");
         setStatus("idle");
-        playNext();
+        setTimeout(() => playNext(), 2000); // 🟢 FIX ANTI-BOUCLE INFINIE
       }
     } catch (error) {
       console.error("Erreur API :", error);
       setStatus("idle");
+      setTimeout(() => playNext(), 2000); // 🟢 FIX ANTI-BOUCLE INFINIE
     }
   }, [prefetchNextLogic, syncDbStats, updateTopTracks, saveToCache]);
-
+  
   const playTrack = useCallback(async (track: Track, newQueue?: Track[]) => {
     if (newQueue && newQueue.length > 0) {
       setQueue(newQueue);

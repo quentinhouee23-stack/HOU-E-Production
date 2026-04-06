@@ -9,6 +9,15 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
+// 🟢 La liste de nos 5 serveurs de secours ultra-rapides
+const INVIDIOUS_INSTANCES = [
+  "https://inv.nadeko.net",
+  "https://invidious.nerdvpn.de",
+  "https://inv.tux.pizza",
+  "https://invidious.projectsegfau.lt",
+  "https://inv.bp.projectsegfau.lt"
+];
+
 async function incrementTokenUsage() {
   try {
     const today = new Date().toISOString().split('T')[0];
@@ -34,36 +43,6 @@ function fetchWithTimeout(url: string, ms: number, options: RequestInit = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
   return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer));
-}
-
-// 🟢 L'API COBALT : Ultra rapide et stable pour récupérer le flux audio direct
-async function getCobaltAudioUrl(videoId: string): Promise<string | null> {
-  try {
-    const res = await fetch("https://api.cobalt.tools/api/json", {
-      method: "POST",
-      headers: {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        url: `https://www.youtube.com/watch?v=${videoId}`,
-        isAudioOnly: true,
-        aFormat: "mp3", // Le MP3 est le format le plus universel pour l'arrière-plan iOS
-        isNoTTWatermark: true
-      })
-    });
-
-    if (!res.ok) return null;
-    const data = await res.json();
-
-    if (data.url) {
-      console.log(`✅ Cobalt Audio URL récupérée avec succès !`);
-      return data.url;
-    }
-  } catch (e) {
-    console.error("❌ Erreur Cobalt API :", e);
-  }
-  return null;
 }
 
 async function scrapeYouTubeDirect(q: string, timeoutMs: number): Promise<string | null> {
@@ -99,7 +78,6 @@ async function searchYouTubeAPI(q: string, apiKey: string, timeoutMs: number): P
     
     const res = await fetchWithTimeout(searchUrl.toString(), timeoutMs);
     const data = await res.json();
-    
     if (!res.ok || !data.items?.length) return null;
     
     const videoIds = data.items.map((i: any) => i.id.videoId).join(",");
@@ -115,9 +93,7 @@ async function searchYouTubeAPI(q: string, apiKey: string, timeoutMs: number): P
       videoId: item.id,
       seconds: parseDuration(item.contentDetails.duration),
     }));
-    
     await incrementTokenUsage();
-    
     const best = withDurations.find((v: any) => isGoodDuration(v.seconds)) ?? withDurations[0];
     return best?.videoId ?? null;
   } catch (e) {
@@ -132,48 +108,29 @@ export async function GET(req: Request) {
     const q = searchParams.get("q");
     const directVideoId = searchParams.get("videoId"); 
 
-    // 🟢 MODE DIRECT : On connaît déjà le videoId, on veut juste le lien MP3 Cobalt
+    // 🟢 On génère INSTANTANÉMENT une liste de 5 URLs audios sans appeler d'API externe (0 risque de crash serveur)
     if (directVideoId) {
-      console.log(`🎵 Récupération audio pour videoId connu : ${directVideoId}`);
-      const audioUrl = await getCobaltAudioUrl(directVideoId);
-      if (audioUrl) {
-        return NextResponse.json({ audioUrl });
-      }
-      return NextResponse.json({ error: "Audio URL non disponible" }, { status: 404 });
+      const audioUrls = INVIDIOUS_INSTANCES.map(inst => `${inst}/latest_version?id=${directVideoId}&itag=140&local=true`).join(',');
+      return NextResponse.json({ audioUrl: audioUrls });
     }
 
     if (!q) return NextResponse.json({ error: "Recherche vide" }, { status: 400 });
 
-    console.log(`🔍 Recherche globale: ${q}`);
-
-    // ÉTAPE 1 : Trouver le videoId via Scraping ou API Google
-    let videoId: string | null = null;
-    videoId = await scrapeYouTubeDirect(q, 2500);
-
+    // 1. Recherche de l'ID vidéo
+    let videoId = await scrapeYouTubeDirect(q, 2500);
     if (!videoId) {
       const apiKey = process.env.YOUTUBE_API_KEY;
-      if (apiKey) {
-        videoId = await searchYouTubeAPI(q, apiKey, 4000);
-      }
+      if (apiKey) videoId = await searchYouTubeAPI(q, apiKey, 4000);
     }
 
-    if (!videoId) {
-      return NextResponse.json({ error: "Aucun résultat trouvé" }, { status: 404 });
-    }
+    if (!videoId) return NextResponse.json({ error: "Aucun résultat trouvé" }, { status: 404 });
 
-    // ÉTAPE 2 : Récupérer l'URL audio directe pour ce videoId via Cobalt
-    const audioUrl = await getCobaltAudioUrl(videoId);
+    // 2. Génération du tableau de secours
+    const audioUrls = INVIDIOUS_INSTANCES.map(inst => `${inst}/latest_version?id=${videoId}&itag=140&local=true`).join(',');
 
-    if (audioUrl) {
-      console.log(`✅ Réponse complète : videoId=${videoId} + audioUrl OK`);
-      return NextResponse.json({ videoId, audioUrl });
-    }
-
-    // Fallback de sécurité
-    return NextResponse.json({ videoId });
+    return NextResponse.json({ videoId, audioUrl: audioUrls });
 
   } catch (e) {
-    console.error("❌ Erreur globale /api/youtube:", e);
     return NextResponse.json({ error: "Erreur serveur" }, { status: 500 });
   }
 }
