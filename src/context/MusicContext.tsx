@@ -21,6 +21,8 @@ interface MusicContextValue {
   repeatMode: "off" | "all" | "one";
   sleepMode: SleepMode;
   sleepSeconds: number | null;
+  playbackError: string | null;
+  setPlaybackError: (err: string | null) => void;
   setSleepMode: (mode: SleepMode) => void;
   playTrack: (track: Track, newQueue?: Track[]) => void;
   playNext: () => void;
@@ -66,8 +68,9 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   const [repeatMode, setRepeatMode] = useState<"off" | "all" | "one">("off");
   const [sleepModeState, setSleepModeState] = useState<SleepMode>(null);
   const [sleepSeconds, setSleepSeconds] = useState<number | null>(null);
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
+  
   const sleepModeRef = useRef<SleepMode>(null);
-
   const queueRef = useRef<Track[]>([]);
   const currentTrackIdRef = useRef<string | null>(null);
   const isShuffleRef = useRef(false);
@@ -76,8 +79,6 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   const currentTimeRef = useRef(0);
   
   const ytCacheRef = useRef<Record<string, string>>({});
-  const audioUrlCacheRef = useRef<Record<string, string>>({});
-  
   const listenAccumulatorRef = useRef(0);
   const lastPlayedSecondsRef = useRef(0);
 
@@ -285,18 +286,45 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     }
   }, [status, addMinuteToStats, duration]);
 
-  const prefetchTrack = useCallback((track: Track) => {
-    if (!track || ytCacheRef.current[track.id]) return;
-    const query = `${track.artist} ${track.title} audio -"full album" -"1 hour" -"live" -"compilation"`;
-    fetch(`/api/youtube?q=${encodeURIComponent(query)}`)
-      .then(res => res.json())
-      .then(data => {
-        if (data.videoId && isValidYTId(data.videoId)) {
-          saveToCache(track.id, data.videoId);
+  // 🟢 LA NOUVELLE MÉTHODE INFAILLIBLE : Le téléphone récupère le JSON grâce aux proxys CORS.
+  const fetchStreamUrl = async (vidId: string): Promise<string | null> => {
+    const PIPED_APIS = [
+      "https://api.piped.projectsegfau.lt",
+      "https://pipedapi.smnz.de",
+      "https://piped-api.garudalinux.org",
+      "https://pipedapi.kavin.rocks"
+    ];
+    const CORS_PROXIES = [
+      "https://corsproxy.io/?url=",
+      "https://api.allorigins.win/raw?url="
+    ];
+
+    for (const proxy of CORS_PROXIES) {
+      for (const api of PIPED_APIS) {
+        try {
+          const targetUrl = `${api}/streams/${vidId}`;
+          const reqUrl = `${proxy}${encodeURIComponent(targetUrl)}`;
+          
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 3000);
+          const res = await fetch(reqUrl, { signal: controller.signal });
+          clearTimeout(timer);
+
+          if (!res.ok) continue;
+          
+          const data = await res.json();
+          const streams = data.audioStreams || [];
+          
+          // On exige un vrai format Apple (m4a) pour éviter l'erreur MEDIA_ERR_SRC_NOT_SUPPORTED
+          const best = streams.find((s: any) => s.mimeType.includes("m4a") || s.mimeType.includes("mp4"));
+          if (best && best.url) return best.url;
+        } catch (e) {
+          continue; // Si un proxy ou une API plante, on passe au suivant
         }
-      })
-      .catch(() => {});
-  }, [saveToCache]);
+      }
+    }
+    return null;
+  };
 
   const prefetchNextLogic = useCallback(() => {
     const q = queueRef.current;
@@ -313,8 +341,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
         nextTrack = q[0];
       }
     }
-    if (nextTrack) prefetchTrack(nextTrack);
-  }, [prefetchTrack]);
+  }, []);
 
   useEffect(() => {
     let syncTimeout: NodeJS.Timeout;
@@ -343,6 +370,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       window.dispatchEvent(new Event('stopPreview'));
     }
     
+    setPlaybackError(null);
     setStatus("loading");
     setCurrentTrack(track);
     currentTrackIdRef.current = track.id;
@@ -353,55 +381,39 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     
     unlockAudio();
 
-    const cachedVideoId = ytCacheRef.current[track.id];
-    if (cachedVideoId && isValidYTId(cachedVideoId)) {
-      const cachedAudioUrl = audioUrlCacheRef.current[cachedVideoId];
-      if (cachedAudioUrl) {
-        setPlayingUrl(cachedAudioUrl);
-        setStatus("playing");
-        prefetchNextLogic();
-        return;
-      }
-      
-      try {
-        const res = await fetch(`/api/youtube?videoId=${cachedVideoId}`);
-        const data = await res.json();
-        if (data.audioUrl) {
-          audioUrlCacheRef.current[cachedVideoId] = data.audioUrl;
-          setPlayingUrl(data.audioUrl);
-          setStatus("playing");
-          prefetchNextLogic();
-          return;
-        }
-      } catch (e) {}
-    }
-
     try {
-      const query = `${track.artist} ${track.title} audio -"full album" -"1 hour" -"live" -"compilation"`;
-      const res = await fetch(`/api/youtube?q=${encodeURIComponent(query)}`);
-      
-      if (!res.ok) {
-         setStatus("idle");
-         setTimeout(() => playNext(), 2000); 
-         return;
+      let videoId = ytCacheRef.current[track.id];
+
+      // 1. On demande juste l'ID à Vercel (si on ne l'a pas)
+      if (!videoId || !isValidYTId(videoId)) {
+        const query = `${track.artist} ${track.title} audio -"full album" -"1 hour" -"live" -"compilation"`;
+        const res = await fetch(`/api/youtube?q=${encodeURIComponent(query)}`);
+        if (!res.ok) throw new Error(`Vercel Recherche a échoué (Code ${res.status})`);
+        
+        const data = await res.json();
+        if (data.videoId) {
+           videoId = data.videoId;
+           saveToCache(track.id, videoId);
+        } else {
+           throw new Error("Vercel n'a retourné aucun ID");
+        }
       }
 
-      const data = await res.json();
-      
-      if (data.audioUrl) {
-        saveToCache(track.id, data.videoId);
-        audioUrlCacheRef.current[data.videoId] = data.audioUrl;
-        setPlayingUrl(data.audioUrl);
+      // 2. Le téléphone fabrique le lien tout seul via les proxys !
+      const audioUrl = await fetchStreamUrl(videoId);
+
+      if (audioUrl) {
+        setPlayingUrl(audioUrl);
         setStatus("playing");
         prefetchNextLogic();
       } else {
+        setPlaybackError("Tous les proxys ont échoué. Aucun lien M4A valide trouvé.");
         setStatus("idle");
-        setTimeout(() => playNext(), 2000);
       }
     } catch (error) {
       console.error("Erreur API :", error);
+      setPlaybackError(error.message || "Erreur de connexion inattendue");
       setStatus("idle");
-      setTimeout(() => playNext(), 2000); 
     }
   }, [prefetchNextLogic, syncDbStats, updateTopTracks, saveToCache, unlockAudio]);
 
@@ -604,6 +616,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     currentTrack, status, playingUrl, duration, volume,
     isFullScreen, seekRequest, queue, isShuffle, repeatMode,
     sleepMode: sleepModeState, sleepSeconds, setSleepMode,
+    playbackError, setPlaybackError,
     playTrack, playNext, playPrev, toggleShuffle, toggleRepeat, togglePlayPause, setVolume, seek,
     onProgress: handleProgress,
     onDuration: setDuration,
@@ -613,7 +626,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   }), [
     currentTrack, status, playingUrl, duration, volume,
     isFullScreen, seekRequest, queue, isShuffle, repeatMode,
-    sleepModeState, sleepSeconds,
+    sleepModeState, sleepSeconds, playbackError,
     playTrack, playNext, playPrev, setSleepMode, toggleShuffle, toggleRepeat, togglePlayPause, seek, handleProgress, handleEnded, clearSeekRequest,
     isMusicLoaded
   ]);
