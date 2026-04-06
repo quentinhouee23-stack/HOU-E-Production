@@ -380,12 +380,9 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       const query = `${track.artist} ${track.title} audio -"full album" -"1 hour" -"live" -"compilation"`;
       const res = await fetch(`/api/youtube?q=${encodeURIComponent(query)}`);
       
-      // 🟢 DEBUG LOURD : On lit le statut exact du serveur
       if (!res.ok) {
-         const errorText = await res.text();
-         alert(`Vercel a refusé avec le code ${res.status}.\nRéponse: ${errorText}`);
          setStatus("idle");
-         // On ne skip plus automatiquement !
+         setTimeout(() => playNext(), 2000); 
          return;
       }
 
@@ -398,16 +395,13 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
         setStatus("playing");
         prefetchNextLogic();
       } else {
-        // 🟢 DEBUG LOURD : Le JSON est valide mais vide
-        alert("Vercel a répondu OK, mais aucun lien audio n'a été trouvé. \nJSON: " + JSON.stringify(data));
         setStatus("idle");
-        // On ne skip plus automatiquement !
+        setTimeout(() => playNext(), 2000);
       }
     } catch (error) {
-      // 🟢 DEBUG LOURD : L'appel réseau a crashé
-      alert("Erreur fatale de connexion Vercel : " + error.message);
+      console.error("Erreur API :", error);
       setStatus("idle");
-      // On ne skip plus automatiquement !
+      setTimeout(() => playNext(), 2000); 
     }
   }, [prefetchNextLogic, syncDbStats, updateTopTracks, saveToCache, unlockAudio]);
 

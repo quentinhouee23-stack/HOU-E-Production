@@ -8,13 +8,15 @@ export const maxDuration = 20;
 const PIPED_APIS = [
   "https://pipedapi.kavin.rocks",
   "https://pipedapi.syncpundit.io",
-  "https://api.piped.projectsegfau.lt"
+  "https://api.piped.projectsegfau.lt",
+  "https://pipedapi.smnz.de"
 ];
 
 const INVIDIOUS_APIS = [
   "https://inv.tux.pizza",
   "https://invidious.nerdvpn.de",
-  "https://inv.nadeko.net"
+  "https://inv.nadeko.net",
+  "https://invidious.fdn.fr"
 ];
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -36,10 +38,12 @@ function fetchWithTimeout(url: string, ms: number, options: RequestInit = {}) {
   return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer));
 }
 
+// 🟢 RECHERCHE BLINDÉE SUR 3 NIVEAUX
 async function searchVideoId(q: string): Promise<string | null> {
+  // Niveau 1 : Piped
   for (const api of PIPED_APIS) {
     try {
-      const res = await fetchWithTimeout(`${api}/search?q=${encodeURIComponent(q)}&filter=videos`, 3000);
+      const res = await fetchWithTimeout(`${api}/search?q=${encodeURIComponent(q)}&filter=videos`, 2500);
       if (res.ok) {
         const data = await res.json();
         if (data.items && data.items.length > 0) {
@@ -50,6 +54,20 @@ async function searchVideoId(q: string): Promise<string | null> {
     } catch (e) {}
   }
 
+  // Niveau 2 : Invidious API
+  for (const api of INVIDIOUS_APIS) {
+    try {
+      const res = await fetchWithTimeout(`${api}/api/v1/search?q=${encodeURIComponent(q)}&type=video`, 2500);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.length > 0 && data[0].videoId) {
+          return data[0].videoId;
+        }
+      }
+    } catch (e) {}
+  }
+
+  // Niveau 3 : Scrape direct
   try {
     const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`;
     const res = await fetchWithTimeout(searchUrl, 3000, {
@@ -68,20 +86,12 @@ async function searchVideoId(q: string): Promise<string | null> {
   return null;
 }
 
-async function checkUrlAlive(url: string): Promise<boolean> {
-  try {
-    const res = await fetchWithTimeout(url, 2000, { method: 'HEAD' });
-    return res.ok || res.status === 302 || res.status === 206;
-  } catch (e) {
-    return false;
-  }
-}
-
+// 🟢 FABRICATION DU LIEN AUDIO SANS TEST VERCEL
 async function getAudioUrl(videoId: string): Promise<string | null> {
-  // 1. Piped : On exige du format MP4/M4A. Pas de WebM autorisé car iOS le rejette !
+  // On tente d'abord de récupérer l'URL Piped s'il accepte Vercel
   for (const api of PIPED_APIS) {
     try {
-      const res = await fetchWithTimeout(`${api}/streams/${videoId}`, 3000);
+      const res = await fetchWithTimeout(`${api}/streams/${videoId}`, 2000);
       if (res.ok) {
         const data = await res.json();
         const streams = data.audioStreams || [];
@@ -91,14 +101,11 @@ async function getAudioUrl(videoId: string): Promise<string | null> {
     } catch (e) {}
   }
 
-  // 2. Invidious : Itag 140 = M4A (100% compatible Apple)
-  for (const api of INVIDIOUS_APIS) {
-    const testUrl = `${api}/latest_version?id=${videoId}&itag=140&local=true`;
-    const isAlive = await checkUrlAlive(testUrl);
-    if (isAlive) return testUrl;
-  }
-
-  return null;
+  // Si Piped bloque Vercel, ON NE TESTE PLUS INVIDIOUS DEPUIS VERCEL.
+  // On donne directement le lien M4A (itag 140) à ton téléphone. 
+  // C'est ton iPhone qui contournera les sécurités en l'ouvrant !
+  const randomApi = INVIDIOUS_APIS[Math.floor(Math.random() * INVIDIOUS_APIS.length)];
+  return `${randomApi}/latest_version?id=${videoId}&itag=140&local=true`;
 }
 
 export async function GET(req: Request) {
@@ -117,6 +124,19 @@ export async function GET(req: Request) {
 
     const videoId = await searchVideoId(q);
     if (!videoId) {
+      // Secours ultime API Google
+      const apiKey = process.env.YOUTUBE_API_KEY;
+      if (apiKey) {
+        try {
+          const res = await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=1&q=${encodeURIComponent(q)}&key=${apiKey}`);
+          const data = await res.json();
+          if (data.items && data.items.length > 0) {
+            const vId = data.items[0].id.videoId;
+            const aUrl = await getAudioUrl(vId);
+            if (aUrl) return NextResponse.json({ videoId: vId, audioUrl: aUrl });
+          }
+        } catch(e) {}
+      }
       return NextResponse.json({ error: "Aucun résultat trouvé" }, { status: 404 });
     }
 
@@ -125,7 +145,7 @@ export async function GET(req: Request) {
       return NextResponse.json({ videoId, audioUrl });
     }
 
-    return NextResponse.json({ error: "Flux audio introuvable en format M4A" }, { status: 404 });
+    return NextResponse.json({ error: "Flux audio introuvable au format M4A" }, { status: 404 });
   } catch (e) {
     return NextResponse.json({ error: "Erreur serveur" }, { status: 500 });
   }
