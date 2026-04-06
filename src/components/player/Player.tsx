@@ -5,7 +5,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { useMusic } from "@/context/MusicContext";
 
 export function Player() {
-  const { playingUrl, status, volume, onDuration, onProgress, onEnded, seekRequest, clearSeekRequest, playbackError, setPlaybackError, handleAudioError } = useMusic();
+  const { playingUrl, status, volume, onDuration, onProgress, onEnded, seekRequest, clearSeekRequest, playbackError, setPlaybackError } = useMusic();
   const [isClient, setIsClient] = useState(false);
   
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -25,10 +25,11 @@ export function Player() {
 
     if (status === "playing") {
       audio.play().catch((err) => {
-        setPlaybackError("Autoplay bloqué. Appuyez sur lecture.");
+        // Un autoplay refusé se gère en douceur.
+        console.warn("Autoplay bloqué");
       });
     }
-  }, [playingUrl, setPlaybackError, status]);
+  }, [playingUrl, status]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -105,8 +106,14 @@ export function Player() {
         }}
         onEnded={onEnded}
         onError={(e) => {
-          // 🟢 LA MAGIE EST ICI : Au lieu de mourir, le lecteur demande le prochain serveur !
-          handleAudioError();
+          let errCode = audioRef.current?.error?.code;
+          let errMsg = "Erreur inconnue";
+          if (errCode === 1) errMsg = "Processus annulé par iOS (MEDIA_ERR_ABORTED)";
+          if (errCode === 2) errMsg = "Coupure réseau ou blocage serveur (MEDIA_ERR_NETWORK)";
+          if (errCode === 3) errMsg = "Fichier corrompu (MEDIA_ERR_DECODE)";
+          if (errCode === 4) errMsg = "Format refusé ou lien expiré (MEDIA_ERR_SRC_NOT_SUPPORTED)";
+          
+          setPlaybackError(`${errMsg}`);
         }}
         style={{ display: "none" }}
       />
