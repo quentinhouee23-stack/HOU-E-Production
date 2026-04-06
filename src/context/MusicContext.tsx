@@ -48,9 +48,7 @@ function getISOWeek(date: Date) {
   return d.getUTCFullYear() + "-W" + Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
 }
 
-const isValidYTId = (id: string | null | undefined) => {
-  return typeof id === "string" && id.length === 11;
-};
+const isValidYTId = (id: string | null | undefined) => typeof id === "string" && id.length === 11;
 
 export function MusicProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
@@ -76,25 +74,15 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   const repeatModeRef = useRef<"off" | "all" | "one">("off");
   const playHistoryRef = useRef<string[]>([]);
   const currentTimeRef = useRef(0);
-
   const ytCacheRef = useRef<Record<string, string>>({});
-  const audioUrlCacheRef = useRef<Record<string, string>>({});
-
   const listenAccumulatorRef = useRef(0);
   const lastPlayedSecondsRef = useRef(0);
 
-  // 🔑 Ref pour éviter les appels playNext en boucle lors des erreurs
-  const isLoadingRef = useRef(false);
-  const lastSkipTimeRef = useRef(0);
-
-  // 📱 iOS : déverrouille le contexte audio lors du PREMIER geste utilisateur
-  // On dispatch l'event iosUnlock que le Player écoutera pour faire un silent-play
-  const unlockAudio = useCallback(() => {
+  const unlockAudio = useCallback((videoId?: string) => {
     if (typeof window === "undefined") return;
-    window.dispatchEvent(new CustomEvent("iosUnlock"));
+    window.dispatchEvent(new CustomEvent("iosUnlock", { detail: { videoId } }));
   }, []);
 
-  // Initialisation depuis le localStorage
   useEffect(() => {
     try {
       let currentCache = {};
@@ -103,9 +91,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       if (savedCache) {
         const rawCache = JSON.parse(savedCache);
         for (const key in rawCache) {
-          if (isValidYTId(rawCache[key])) {
-            currentCache[key] = rawCache[key];
-          }
+          if (isValidYTId(rawCache[key])) currentCache[key] = rawCache[key];
         }
         ytCacheRef.current = currentCache;
         localStorage.setItem("stream_yt_cache", JSON.stringify(currentCache));
@@ -119,7 +105,10 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
         const parsedTrack = JSON.parse(savedTrack);
         setCurrentTrack(parsedTrack);
         currentTrackIdRef.current = parsedTrack.id;
-        setPlayingUrl(null);
+        const cachedVideoId = currentCache[parsedTrack.id];
+        if (isValidYTId(cachedVideoId)) {
+          setPlayingUrl(`https://www.youtube.com/watch?v=${cachedVideoId}`);
+        }
       }
 
       const savedQueue = localStorage.getItem("houee_last_queue");
@@ -129,7 +118,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
         queueRef.current = parsedQueue;
       }
     } catch (e) {
-      console.error("Erreur lecture cache", e);
+      console.error("Erreur lecture cache audio", e);
     } finally {
       setIsMusicLoaded(true);
     }
@@ -141,15 +130,11 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (isMusicLoaded && currentTrack) {
-      localStorage.setItem("houee_last_track", JSON.stringify(currentTrack));
-    }
+    if (isMusicLoaded && currentTrack) localStorage.setItem("houee_last_track", JSON.stringify(currentTrack));
   }, [currentTrack, isMusicLoaded]);
 
   useEffect(() => {
-    if (isMusicLoaded) {
-      localStorage.setItem("houee_last_queue", JSON.stringify(queue));
-    }
+    if (isMusicLoaded) localStorage.setItem("houee_last_queue", JSON.stringify(queue));
   }, [queue, isMusicLoaded]);
 
   const saveToCache = useCallback((trackId: string, videoId: string) => {
@@ -157,15 +142,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     ytCacheRef.current[trackId] = videoId;
     try {
       localStorage.setItem("stream_yt_cache", JSON.stringify(ytCacheRef.current));
-    } catch (e) {
-      const keys = Object.keys(ytCacheRef.current);
-      if (keys.length > 200) {
-        const newCache = {};
-        keys.slice(keys.length - 200).forEach(k => (newCache[k] = ytCacheRef.current[k]));
-        ytCacheRef.current = newCache;
-        localStorage.setItem("stream_yt_cache", JSON.stringify(ytCacheRef.current));
-      }
-    }
+    } catch (e) {}
   }, []);
 
   const setSleepMode = useCallback((mode: SleepMode) => {
@@ -207,7 +184,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     if (stats) updates.daily_stats = stats;
     if (top) updates.top_tracks = top;
     if (Object.keys(updates).length > 0) {
-      await supabase.from("profiles").update(updates).eq("id", user.id);
+      await supabase.from('profiles').update(updates).eq('id', user.id);
     }
   }, [user]);
 
@@ -231,12 +208,12 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       localStorage.setItem("weeklyTopTracks", JSON.stringify([]));
       localStorage.setItem("currentWeekStr", currentWeekStr);
       if (user) {
-        await supabase.from("profiles").update({
+        await supabase.from('profiles').update({
           last_week_stats: oldStats,
           last_week_top_tracks: oldTracks,
           daily_stats: emptyDaily,
-          top_tracks: [],
-        }).eq("id", user.id);
+          top_tracks: []
+        }).eq('id', user.id);
       }
     }
   }, [user]);
@@ -253,7 +230,9 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       ];
     }
     const todayIndex = stats.findIndex((s: any) => s.day === todayStr);
-    if (todayIndex !== -1) stats[todayIndex].minutes += 1;
+    if (todayIndex !== -1) {
+      stats[todayIndex].minutes += 1;
+    }
     localStorage.setItem("dailyStats", JSON.stringify(stats));
     window.dispatchEvent(new Event("statsUpdated"));
   }, [checkWeekRollover]);
@@ -277,10 +256,10 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     const currentPlayed = state.playedSeconds || 0;
     currentTimeRef.current = currentPlayed;
 
-    if ("mediaSession" in navigator && navigator.mediaSession.setPositionState && duration > 0) {
+    if ('mediaSession' in navigator && navigator.mediaSession.setPositionState && duration > 0) {
       try {
         navigator.mediaSession.setPositionState({
-          duration,
+          duration: duration,
           playbackRate: 1,
           position: currentPlayed,
         });
@@ -288,7 +267,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     }
 
     window.dispatchEvent(new CustomEvent("musicTimeUpdate", {
-      detail: { currentTime: currentPlayed },
+      detail: { currentTime: currentPlayed }
     }));
 
     if (status === "playing") {
@@ -314,7 +293,6 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       .then(data => {
         if (data.videoId && isValidYTId(data.videoId)) {
           saveToCache(track.id, data.videoId);
-          if (data.audioUrl) audioUrlCacheRef.current[data.videoId] = data.audioUrl;
         }
       })
       .catch(() => {});
@@ -342,31 +320,28 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     let syncTimeout: NodeJS.Timeout;
     if (user && currentTrack && status === "playing") {
       syncTimeout = setTimeout(() => {
-        supabase.from("profiles").update({
+        supabase.from('profiles').update({
           current_listening: {
             title: currentTrack.title,
             artist: currentTrack.artist,
-            image: currentTrack.image,
-          },
-        }).eq("id", user.id).then();
+            image: currentTrack.image
+          }
+        }).eq('id', user.id).then();
       }, 10000);
     }
     return () => clearTimeout(syncTimeout);
   }, [user, currentTrack, status]);
 
   const loadAndPlayUrl = useCallback(async (track: Track) => {
-    // Coupe les autres éléments audio parasites
     if (typeof document !== "undefined") {
-      document.querySelectorAll("audio").forEach(audio => {
-        if (audio.hasAttribute("data-main-player")) return;
+      document.querySelectorAll('audio').forEach(audio => {
+        if (audio.id === 'ghost-audio') return; 
         audio.pause();
-        audio.removeAttribute("src");
+        audio.removeAttribute('src');
         audio.load();
       });
-      window.dispatchEvent(new Event("stopPreview"));
+      window.dispatchEvent(new Event('stopPreview'));
     }
-
-    isLoadingRef.current = true;
     setStatus("loading");
     setCurrentTrack(track);
     currentTrackIdRef.current = track.id;
@@ -374,76 +349,34 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     syncDbStats();
     lastPlayedSecondsRef.current = 0;
     currentTimeRef.current = 0;
-
-    // 1. Vérifier le cache des URLs audio directes (Piped)
-    const cachedVideoId = ytCacheRef.current[track.id];
-    if (cachedVideoId && isValidYTId(cachedVideoId)) {
-      const cachedAudioUrl = audioUrlCacheRef.current[cachedVideoId];
-      if (cachedAudioUrl) {
-        setPlayingUrl(cachedAudioUrl);
-        setStatus("playing");
-        isLoadingRef.current = false;
-        prefetchNextLogic();
-        return;
-      }
-
-      // On a le videoId en cache mais pas l'URL audio → on rafraîchit l'URL Piped
-      try {
-        const res = await fetch(`/api/youtube?videoId=${cachedVideoId}`);
-        const data = await res.json();
-        if (data.audioUrl) {
-          audioUrlCacheRef.current[cachedVideoId] = data.audioUrl;
-          setPlayingUrl(data.audioUrl);
-          setStatus("playing");
-          isLoadingRef.current = false;
-          prefetchNextLogic();
-          return;
-        }
-      } catch (e) {
-        console.warn("Rafraîchissement URL Piped échoué, recherche complète...");
-      }
+    
+    const cachedId = ytCacheRef.current[track.id];
+    if (cachedId && isValidYTId(cachedId)) {
+      unlockAudio(cachedId); 
+      setPlayingUrl(`https://www.youtube.com/watch?v=${cachedId}`);
+      setStatus("playing");
+      prefetchNextLogic();
+      return;
     }
-
-    // 2. Recherche complète YouTube → Piped
+    
+    unlockAudio();
     try {
       const query = `${track.artist} ${track.title} audio -"full album" -"1 hour" -"live" -"compilation"`;
       const res = await fetch(`/api/youtube?q=${encodeURIComponent(query)}`);
       const data = await res.json();
-
       if (data.videoId && isValidYTId(data.videoId)) {
         saveToCache(track.id, data.videoId);
-        if (data.audioUrl) {
-          audioUrlCacheRef.current[data.videoId] = data.audioUrl;
-          setPlayingUrl(data.audioUrl);
-          setStatus("playing");
-          isLoadingRef.current = false;
-          prefetchNextLogic();
-        } else {
-          console.warn("❌ Aucun flux audio disponible pour cette vidéo.");
-          setStatus("idle");
-          isLoadingRef.current = false;
-          // Anti-boucle : on attend 2s avant de skip
-          setTimeout(() => {
-            if (!isLoadingRef.current) playNextRef.current();
-          }, 2000);
-        }
+        setPlayingUrl(`https://www.youtube.com/watch?v=${data.videoId}`);
+        setStatus("playing");
+        prefetchNextLogic();
       } else {
-        console.warn("❌ Vidéo YouTube introuvable.");
         setStatus("idle");
-        isLoadingRef.current = false;
-        setTimeout(() => {
-          if (!isLoadingRef.current) playNextRef.current();
-        }, 2000);
       }
     } catch (error) {
-      console.error("Erreur API YouTube :", error);
+      console.error("Erreur API :", error);
       setStatus("idle");
-      isLoadingRef.current = false;
-      setTimeout(() => {
-        if (!isLoadingRef.current) playNextRef.current();
-      }, 2000);
     }
-  }, [prefetchNextLogic, syncDbStats, updateTopTracks, saveToCache]);
+  }, [prefetchNextLogic, syncDbStats, updateTopTracks, saveToCache, unlockAudio]);
 
   const playTrack = useCallback(async (track: Track, newQueue?: Track[]) => {
     if (newQueue && newQueue.length > 0) {
@@ -489,14 +422,6 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   }, [currentTrack, loadAndPlayUrl]);
 
   const playNext = useCallback(() => {
-    // 🛡️ Anti-boucle : on refuse deux skips en moins de 1.5s
-    const now = Date.now();
-    if (now - lastSkipTimeRef.current < 1500) {
-      console.warn("⏭️ Skip trop rapide, ignoré");
-      return;
-    }
-    lastSkipTimeRef.current = now;
-
     const q = queueRef.current;
     const handlePlaylistEnd = () => {
       if (sleepModeRef.current === "playlistEnd") {
@@ -507,7 +432,6 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
         playRadioTrack();
       }
     };
-
     if (q.length === 0) {
       if (currentTrackIdRef.current) {
         handlePlaylistEnd();
@@ -516,7 +440,6 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       }
       return;
     }
-
     let nextTrack: Track | undefined;
     if (isShuffleRef.current) {
       const unplayed = q.filter(t => !playHistoryRef.current.includes(t.id));
@@ -546,12 +469,10 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
         }
       }
     }
-    if (nextTrack) loadAndPlayUrl(nextTrack);
+    if (nextTrack) {
+      loadAndPlayUrl(nextTrack);
+    }
   }, [loadAndPlayUrl, playRadioTrack]);
-
-  // Ref stable pour playNext (utilisée dans les timeouts de loadAndPlayUrl)
-  const playNextRef = useRef(playNext);
-  useEffect(() => { playNextRef.current = playNext; }, [playNext]);
 
   const playPrev = useCallback(() => {
     const q = queueRef.current;
@@ -569,7 +490,8 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       playHistoryRef.current.push(prevTrack.id);
       loadAndPlayUrl(prevTrack);
     } else {
-      loadAndPlayUrl(q[q.length - 1]);
+      const prevTrack = q[q.length - 1];
+      loadAndPlayUrl(prevTrack);
     }
   }, [loadAndPlayUrl]);
 
@@ -579,21 +501,17 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const toggleRepeat = useCallback(() => {
-    const nextMode =
-      repeatModeRef.current === "off" ? "all" :
+    const nextMode = repeatModeRef.current === "off" ? "all" :
       repeatModeRef.current === "all" ? "one" : "off";
     repeatModeRef.current = nextMode;
     setRepeatMode(nextMode);
   }, []);
 
-  // 📱 togglePlayPause : appel synchrone de unlockAudio pour iOS
   const togglePlayPause = useCallback(() => {
-    // Déverrouillage immédiat (appel synchrone = dans le geste utilisateur)
-    unlockAudio();
-
+    unlockAudio(); 
     if (status === "playing") {
       setStatus("paused");
-    } else if (status === "paused" || status === "idle") {
+    } else {
       if (!playingUrl && currentTrack) {
         loadAndPlayUrl(currentTrack);
       } else {
@@ -622,38 +540,37 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     playNext();
   }, [playNext, currentTrack, loadAndPlayUrl]);
 
-  // 🎛️ MediaSession API (contrôles écran de verrouillage)
   useEffect(() => {
-    if (!("mediaSession" in navigator) || !currentTrack) return;
+    if ('mediaSession' in navigator && currentTrack) {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: currentTrack.title,
+        artist: currentTrack.artist,
+        album: 'HOUÉE',
+        artwork: [
+          {
+            src: currentTrack.image || 'https://api.dicebear.com/9.x/shapes/png?seed=music',
+            sizes: '512x512',
+            type: 'image/png'
+          }
+        ]
+      });
 
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title: currentTrack.title,
-      artist: currentTrack.artist,
-      album: "HOUÉE",
-      artwork: [
-        {
-          src: currentTrack.image || "https://api.dicebear.com/9.x/shapes/png?seed=music",
-          sizes: "512x512",
-          type: "image/png",
-        },
-      ],
-    });
+      navigator.mediaSession.playbackState = status === "playing" ? "playing" : "paused";
 
-    navigator.mediaSession.playbackState = status === "playing" ? "playing" : "paused";
+      const actionHandlers = [
+        ['play', togglePlayPause],
+        ['pause', () => setStatus("paused")],
+        ['previoustrack', playPrev],
+        ['nexttrack', playNext],
+        ['stop', () => { setStatus("idle"); setPlayingUrl(null); }]
+      ];
 
-    const actionHandlers: [MediaSessionAction, MediaSessionActionHandler][] = [
-      ["play", () => togglePlayPause()],
-      ["pause", () => setStatus("paused")],
-      ["previoustrack", playPrev],
-      ["nexttrack", playNext],
-      ["stop", () => { setStatus("idle"); setPlayingUrl(null); }],
-    ];
-
-    for (const [action, handler] of actionHandlers) {
-      try {
-        navigator.mediaSession.setActionHandler(action, handler);
-      } catch (e) {
-        // Action non supportée sur ce navigateur
+      for (const [action, handler] of actionHandlers) {
+        try {
+          navigator.mediaSession.setActionHandler(action, handler);
+        } catch (error) {
+          console.warn(`L'action "${action}" n'est pas supportée.`);
+        }
       }
     }
   }, [currentTrack, status, playNext, playPrev, togglePlayPause]);
@@ -662,20 +579,18 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     currentTrack, status, playingUrl, duration, volume,
     isFullScreen, seekRequest, queue, isShuffle, repeatMode,
     sleepMode: sleepModeState, sleepSeconds, setSleepMode,
-    playTrack, playNext, playPrev, toggleShuffle, toggleRepeat,
-    togglePlayPause, setVolume, seek,
+    playTrack, playNext, playPrev, toggleShuffle, toggleRepeat, togglePlayPause, setVolume, seek,
     onProgress: handleProgress,
     onDuration: setDuration,
     onEnded: handleEnded,
     setIsFullScreen, clearSeekRequest,
-    isMusicLoaded,
+    isMusicLoaded
   }), [
     currentTrack, status, playingUrl, duration, volume,
     isFullScreen, seekRequest, queue, isShuffle, repeatMode,
     sleepModeState, sleepSeconds,
-    playTrack, playNext, playPrev, setSleepMode, toggleShuffle, toggleRepeat,
-    togglePlayPause, seek, handleProgress, handleEnded, clearSeekRequest,
-    isMusicLoaded,
+    playTrack, playNext, playPrev, setSleepMode, toggleShuffle, toggleRepeat, togglePlayPause, seek, handleProgress, handleEnded, clearSeekRequest,
+    isMusicLoaded
   ]);
 
   return (

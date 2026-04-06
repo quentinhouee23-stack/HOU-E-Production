@@ -1,208 +1,202 @@
 // @ts-nocheck
 "use client";
 
-import React, { useEffect, useRef, useState, useCallback } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useMusic } from "@/context/MusicContext";
 
 export function Player() {
-  const {
-    playingUrl,
-    status,
-    volume,
-    onDuration,
-    onProgress,
-    onEnded,
-    seekRequest,
-    clearSeekRequest,
-  } = useMusic();
-
+  const { playingUrl, status, volume, onDuration, onProgress, onEnded, seekRequest, clearSeekRequest } = useMusic();
   const [isClient, setIsClient] = useState(false);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  
+  const playerContainerRef = useRef(null);
+  const ytPlayerInstance = useRef(null);
+  const progressInterval = useRef(null);
 
-  // 🔑 On stocke tout dans des refs pour éviter les stale closures dans les handlers d'erreur
-  const urlsRef = useRef<string[]>([]);
-  const urlIndexRef = useRef(0);
-  const statusRef = useRef(status);
+  // 🟢 LA RÉFÉRENCE DE L'AUDIO FANTÔME
+  const ghostAudioRef = useRef<HTMLAudioElement>(null);
+  
+  const isReady = useRef(false);
+  const pendingVideoId = useRef<string | null>(null);
+
   const onEndedRef = useRef(onEnded);
-  const volumeRef = useRef(volume);
+  const onDurationRef = useRef(onDuration);
+  const onProgressRef = useRef(onProgress);
 
-  // Synchronisation des refs avec les props
-  useEffect(() => { statusRef.current = status; }, [status]);
   useEffect(() => { onEndedRef.current = onEnded; }, [onEnded]);
-  useEffect(() => { volumeRef.current = volume; }, [volume]);
+  useEffect(() => { onDurationRef.current = onDuration; }, [onDuration]);
+  useEffect(() => { onProgressRef.current = onProgress; }, [onProgress]);
 
-  useEffect(() => { setIsClient(true); }, []);
+  const videoId = playingUrl ? playingUrl.split("v=")[1]?.split("&")[0] : null;
 
-  // 🔧 Fonction centrale de chargement d'une URL dans l'audio
-  const tryPlayUrl = useCallback((index: number) => {
-    const audio = audioRef.current;
-    const url = urlsRef.current[index];
-    if (!audio || !url) return;
+  useEffect(() => {
+    setIsClient(true);
 
-    console.log(`▶️ Chargement serveur ${index + 1}/${urlsRef.current.length} : ${url.substring(0, 60)}...`);
+    const initPlayer = () => {
+      ytPlayerInstance.current = new window.YT.Player(playerContainerRef.current, {
+        width: "100", 
+        height: "100",
+        playerVars: {
+          autoplay: 0, 
+          controls: 0, 
+          disablekb: 1, 
+          fs: 0, 
+          rel: 0, 
+          modestbranding: 1,
+          playsinline: 1,
+          enablejsapi: 1,
+          origin: typeof window !== "undefined" ? window.location.origin : "http://localhost:3000"
+        },
+        events: {
+          onReady: (event) => {
+            isReady.current = true;
+            event.target.setVolume(volume * 100);
+            
+            const vidToLoad = pendingVideoId.current || videoId;
+            if (vidToLoad) {
+              if (status === "playing") {
+                event.target.loadVideoById(vidToLoad);
+              } else {
+                event.target.cueVideoById(vidToLoad);
+              }
+              pendingVideoId.current = null;
+            }
+          },
+          onStateChange: (event) => {
+            if (event.data === window.YT.PlayerState.PLAYING) {
+              const duration = event.target.getDuration();
+              if (duration > 0) onDurationRef.current(duration);
 
-    audio.src = url;
-    audio.load();
+              event.target.unMute();
+              event.target.setVolume(volume * 100);
 
-    if (statusRef.current === "playing") {
-      const playPromise = audio.play();
-      if (playPromise !== undefined) {
-        playPromise.catch((err) => {
-          // NotAllowedError = navigateur bloque l'autoplay (pas une erreur réseau)
-          if (err.name !== "NotAllowedError") {
-            console.warn(`⚠️ Play échoué sur serveur ${index + 1}:`, err.message);
+              progressInterval.current = setInterval(() => {
+                const currentTime = event.target.getCurrentTime();
+                onProgressRef.current({ playedSeconds: currentTime }); 
+              }, 1000);
+            } else {
+              clearInterval(progressInterval.current);
+            }
+            
+            if (event.data === window.YT.PlayerState.ENDED) {
+              onEndedRef.current(); 
+            }
+          },
+          onError: (event) => {
+            onEndedRef.current(); 
           }
-        });
-      }
+        }
+      });
+    };
+
+    if (!window.YT) {
+      const script = document.createElement("script");
+      script.src = "https://www.youtube.com/iframe_api";
+      document.body.appendChild(script);
+      window.onYouTubeIframeAPIReady = initPlayer;
+    } else if (window.YT && window.YT.Player && !ytPlayerInstance.current) {
+      initPlayer();
     }
+
+    return () => clearInterval(progressInterval.current);
   }, []);
 
-  // 🎵 Quand l'URL de lecture change : on reparse les serveurs et on repart de zéro
   useEffect(() => {
-    const urls = playingUrl ? playingUrl.split(",").filter(Boolean) : [];
-    urlsRef.current = urls;
-    urlIndexRef.current = 0;
+    const handleIOSUnlock = (e: CustomEvent) => {
+      const player = ytPlayerInstance.current;
+      if (!player?.playVideo) return;
 
-    if (urls.length > 0) {
-      tryPlayUrl(0);
-    } else {
-      // Plus de chanson → on coupe l'audio
-      const audio = audioRef.current;
-      if (audio) {
-        audio.pause();
-        audio.src = "";
+      const vId = e.detail?.videoId;
+      if (vId) {
+        player.loadVideoById(vId);
+      } else {
+        player.playVideo();
       }
+
+      if (ghostAudioRef.current) {
+        ghostAudioRef.current.play().catch(() => {});
+      }
+    };
+
+    window.addEventListener("iosUnlock", handleIOSUnlock as EventListener);
+    return () => window.removeEventListener("iosUnlock", handleIOSUnlock as EventListener);
+  }, []);
+
+  useEffect(() => {
+    const player = ytPlayerInstance.current;
+    if (!videoId || !player?.loadVideoById || !isReady.current) {
+      if (videoId) pendingVideoId.current = videoId;
+      return;
     }
-  }, [playingUrl, tryPlayUrl]);
-
-  // ⏯️ Contrôle Play / Pause (sans recharger l'URL)
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-
+    
     if (status === "playing") {
-      // Si l'audio a une source et est en pause, on joue
-      if (audio.src && audio.paused) {
-        audio.play().catch((err) => {
-          if (err.name !== "NotAllowedError") {
-            console.warn("Reprise échouée:", err.message);
-          }
-        });
-      }
-    } else if (status === "paused" || status === "idle") {
-      if (!audio.paused) {
-        audio.pause();
+      player.loadVideoById(videoId);
+    } else {
+      player.cueVideoById(videoId);
+    }
+  }, [videoId]);
+
+  useEffect(() => {
+    if (ytPlayerInstance.current && ytPlayerInstance.current.playVideo) {
+      if (status === "playing") {
+        ytPlayerInstance.current.playVideo();
+        if (ghostAudioRef.current) {
+          ghostAudioRef.current.play().catch(() => console.log("Ghost audio autoplay blocked"));
+        }
+      } else if (status === "paused" || status === "idle") {
+        ytPlayerInstance.current.pauseVideo();
+        if (ghostAudioRef.current) {
+          ghostAudioRef.current.pause();
+        }
       }
     }
   }, [status]);
 
-  // 🔊 Volume
   useEffect(() => {
-    if (audioRef.current) {
-      audioRef.current.volume = Math.max(0, Math.min(1, volume));
+    if (ytPlayerInstance.current && ytPlayerInstance.current.setVolume) {
+      ytPlayerInstance.current.setVolume(volume * 100);
     }
   }, [volume]);
 
-  // ⏩ Seek (barre de progression)
   useEffect(() => {
-    if (seekRequest !== null && audioRef.current) {
-      audioRef.current.currentTime = seekRequest;
+    if (seekRequest !== null && ytPlayerInstance.current && ytPlayerInstance.current.seekTo) {
+      ytPlayerInstance.current.seekTo(seekRequest, true);
       clearSeekRequest();
     }
   }, [seekRequest, clearSeekRequest]);
 
-  // 📱 iOS Unlock — déclenché par le premier geste utilisateur via MusicContext
   useEffect(() => {
-    const handleIosUnlock = () => {
-      const audio = audioRef.current;
-      if (!audio) return;
-
-      // Si on a déjà une source et qu'on doit jouer, on lance directement
-      if (statusRef.current === "playing" && audio.src && audio.paused) {
-        audio.play().catch(() => {});
-        return;
-      }
-
-      // Sinon, on fait un "silent play" pour déverrouiller le contexte audio iOS
-      const savedVolume = audio.volume;
-      audio.volume = 0;
-      audio.play()
-        .then(() => {
-          audio.pause();
-          audio.volume = savedVolume;
-          // Si on avait une vraie source à jouer, on relance
-          if (statusRef.current === "playing" && audio.src) {
-            audio.volume = savedVolume;
-            audio.play().catch(() => {});
-          }
-        })
-        .catch(() => {
-          audio.volume = savedVolume;
-        });
-    };
-
-    window.addEventListener("iosUnlock", handleIosUnlock);
-    return () => window.removeEventListener("iosUnlock", handleIosUnlock);
-  }, []);
-
-  // 🌙 Retour depuis veille / arrière-plan (iOS + Android)
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      const audio = audioRef.current;
-      if (!audio) return;
-
-      if (!document.hidden && statusRef.current === "playing" && audio.paused && audio.src) {
-        console.log("📱 Retour au premier plan — reprise de la lecture");
-        audio.play().catch(() => {});
+    const handleVisibility = () => {
+      if (!document.hidden && status === "playing" && ytPlayerInstance.current?.playVideo) {
+        ytPlayerInstance.current.playVideo();
+        if (ghostAudioRef.current) ghostAudioRef.current.play().catch(() => {});
       }
     };
-
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
-  }, []);
-
-  // 🔄 Gestion des erreurs : fallback vers le serveur suivant
-  const handleError = useCallback(() => {
-    const currentIndex = urlIndexRef.current;
-    const urls = urlsRef.current;
-
-    console.error(`❌ Serveur ${currentIndex + 1}/${urls.length} inaccessible (blocage réseau probable)`);
-
-    if (currentIndex < urls.length - 1) {
-      const nextIndex = currentIndex + 1;
-      urlIndexRef.current = nextIndex;
-      console.log(`🔄 Tentative serveur de secours ${nextIndex + 1}/${urls.length}...`);
-      tryPlayUrl(nextIndex);
-    } else {
-      console.error("💀 Tous les serveurs ont échoué — passage à la piste suivante dans 2s");
-      setTimeout(() => {
-        onEndedRef.current();
-      }, 2000);
-    }
-  }, [tryPlayUrl]);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [status]);
 
   if (!isClient) return null;
 
   return (
-    <audio
-      ref={audioRef}
-      playsInline
-      preload="auto"
-      data-main-player="true"
-      onTimeUpdate={() => {
-        if (audioRef.current) {
-          onProgress({ playedSeconds: audioRef.current.currentTime });
-        }
-      }}
-      onDurationChange={() => {
-        const audio = audioRef.current;
-        if (audio && audio.duration > 0 && isFinite(audio.duration)) {
-          onDuration(audio.duration);
-        }
-      }}
-      onEnded={onEnded}
-      onError={handleError}
-      style={{ display: "none" }}
-    />
+    <div style={{
+      position: "fixed",
+      top: "50%",
+      left: "50%",
+      transform: "translate(-50%, -50%)",
+      width: "100px",
+      height: "100px",
+      opacity: 0.001, 
+      pointerEvents: "none",
+      zIndex: 1, 
+    }}>
+      <div ref={playerContainerRef} />
+      <audio
+        ref={ghostAudioRef}
+        id="ghost-audio"
+        src="data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA"
+        loop
+        playsInline
+      />
+    </div>
   );
 }
