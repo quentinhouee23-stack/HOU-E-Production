@@ -5,30 +5,13 @@ import React, { useEffect, useRef, useState } from "react";
 import { useMusic } from "@/context/MusicContext";
 
 export function Player() {
-  const { playingUrl, status, volume, onDuration, onProgress, onEnded, seekRequest, clearSeekRequest, playbackError, setPlaybackError, handleAudioError } = useMusic();
+  const { playingUrl, status, volume, onDuration, onProgress, onEnded, seekRequest, clearSeekRequest, playbackError, setPlaybackError } = useMusic();
   const [isClient, setIsClient] = useState(false);
   
   const audioRef = useRef<HTMLAudioElement>(null);
   const lastUrlRef = useRef<string | null>(null);
 
   useEffect(() => setIsClient(true), []);
-
-  // 🟢 L'ASTUCE ANTI-BLOCAGE IOS
-  // On écoute le signal "iosUnlock" envoyé quand tu cliques sur la musique.
-  // On joue immédiatement un son vierge pour dire à Apple "Je suis un lecteur actif ! Ne me bloque pas !".
-  useEffect(() => {
-    const handleUnlock = () => {
-      if (audioRef.current && audioRef.current.paused) {
-        const oldSrc = audioRef.current.src;
-        if (!oldSrc || oldSrc === "" || oldSrc === window.location.href) {
-           audioRef.current.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
-        }
-        audioRef.current.play().catch(() => {});
-      }
-    };
-    window.addEventListener("iosUnlock", handleUnlock as EventListener);
-    return () => window.removeEventListener("iosUnlock", handleUnlock as EventListener);
-  }, []);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -41,9 +24,7 @@ export function Player() {
     audio.load();
 
     if (status === "playing") {
-      audio.play().catch((err) => {
-        console.warn("Autoplay silencieux bloqué");
-      });
+      audio.play().catch(() => {});
     }
   }, [playingUrl, status]);
 
@@ -71,6 +52,27 @@ export function Player() {
     }
   }, [seekRequest, clearSeekRequest]);
 
+  // 🟢 LE CHIEN DE GARDE (Watchdog) : Si la musique est lancée mais bloquée à 0:00 (serveur qui envoie 0 octet)
+  useEffect(() => {
+    let stallTimer: NodeJS.Timeout;
+    
+    if (status === "playing" && playingUrl) {
+      stallTimer = setTimeout(() => {
+        const audio = audioRef.current;
+        // Si après 6 secondes on est toujours bloqué à 0
+        if (audio && audio.currentTime === 0 && !audio.paused) {
+          setPlaybackError("Le serveur ne répond pas (0 octet). Zapping automatique...");
+          setTimeout(() => {
+              setPlaybackError(null);
+              onEnded(); // On skip proprement
+          }, 1500);
+        }
+      }, 6000);
+    }
+    
+    return () => clearTimeout(stallTimer);
+  }, [status, playingUrl, onEnded, setPlaybackError]);
+
   useEffect(() => {
     const handleVisibility = () => {
       const audio = audioRef.current;
@@ -89,21 +91,11 @@ export function Player() {
       {playbackError && (
         <div style={{
           position: "fixed", top: 0, left: 0, right: 0, zIndex: 99999,
-          backgroundColor: "#ff0000", color: "#ffffff", padding: "20px",
-          fontFamily: "monospace", fontSize: "14px", wordWrap: "break-word",
+          backgroundColor: "#ff0000", color: "#ffffff", padding: "15px",
+          fontFamily: "monospace", fontSize: "14px", textAlign: "center",
           boxShadow: "0px 4px 10px rgba(0,0,0,0.5)"
         }}>
-          <h3 style={{ margin: "0 0 10px 0", fontWeight: "bold" }}>🚨 ÉTAT LECTURE</h3>
-          <p style={{ margin: "0 0 15px 0" }}>{playbackError}</p>
-          <button 
-            onClick={() => {
-                setPlaybackError(null);
-                onEnded(); 
-            }} 
-            style={{ backgroundColor: "#000", color: "#fff", padding: "10px 15px", border: "none", borderRadius: "5px", fontWeight: "bold" }}
-          >
-            Fermer et Suivant
-          </button>
+          <strong>🚨 {playbackError}</strong>
         </div>
       )}
 
@@ -121,9 +113,12 @@ export function Player() {
           }
         }}
         onEnded={onEnded}
-        onError={(e) => {
-          // Si un serveur Invidious est radin ou lent, on appelle le Cerveau pour changer immédiatement !
-          handleAudioError();
+        onError={() => {
+          setPlaybackError("Erreur réseau ou fichier mort. Zapping automatique...");
+          setTimeout(() => {
+              setPlaybackError(null);
+              onEnded();
+          }, 1500);
         }}
         style={{ display: "none" }}
       />

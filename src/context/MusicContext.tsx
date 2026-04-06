@@ -38,19 +38,9 @@ interface MusicContextValue {
   setIsFullScreen: (val: boolean) => void;
   clearSeekRequest: () => void;
   isMusicLoaded: boolean;
-  handleAudioError: () => void;
 }
 
 const MusicContext = createContext<MusicContextValue | null>(null);
-
-// Les serveurs audio directs (M4A)
-const INVIDIOUS_INSTANCES = [
-  "https://inv.tux.pizza",
-  "https://invidious.nerdvpn.de",
-  "https://invidious.fdn.fr",
-  "https://inv.nadeko.net",
-  "https://invidious.perennialte.ch"
-];
 
 function getISOWeek(date: Date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
@@ -79,7 +69,6 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   const [sleepModeState, setSleepModeState] = useState<SleepMode>(null);
   const [sleepSeconds, setSleepSeconds] = useState<number | null>(null);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
-  const [instanceIndex, setInstanceIndex] = useState(0);
   
   const sleepModeRef = useRef<SleepMode>(null);
   const queueRef = useRef<Track[]>([]);
@@ -90,6 +79,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   const currentTimeRef = useRef(0);
   
   const ytCacheRef = useRef<Record<string, string>>({});
+  const audioUrlCacheRef = useRef<Record<string, string>>({});
   const listenAccumulatorRef = useRef(0);
   const lastPlayedSecondsRef = useRef(0);
 
@@ -297,19 +287,6 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     }
   }, [status, addMinuteToStats, duration]);
 
-  const prefetchTrack = useCallback((track: Track) => {
-    if (!track || ytCacheRef.current[track.id]) return;
-    const query = `${track.artist} ${track.title} audio -"full album" -"1 hour" -"live" -"compilation"`;
-    fetch(`/api/youtube?q=${encodeURIComponent(query)}`)
-      .then(res => res.json())
-      .then(data => {
-        if (data.videoId && isValidYTId(data.videoId)) {
-          saveToCache(track.id, data.videoId);
-        }
-      })
-      .catch(() => {});
-  }, [saveToCache]);
-
   const prefetchNextLogic = useCallback(() => {
     const q = queueRef.current;
     if (q.length === 0) return;
@@ -325,8 +302,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
         nextTrack = q[0];
       }
     }
-    if (nextTrack) prefetchTrack(nextTrack);
-  }, [prefetchTrack]);
+  }, []);
 
   useEffect(() => {
     let syncTimeout: NodeJS.Timeout;
@@ -343,21 +319,6 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     }
     return () => clearTimeout(syncTimeout);
   }, [user, currentTrack, status]);
-
-  // Si le lecteur audio plante (ex: lien mort), il appelle cette fonction pour switcher de serveur Invidious
-  const handleAudioError = useCallback(() => {
-    if (instanceIndex < INVIDIOUS_INSTANCES.length - 1) {
-      const nextIndex = instanceIndex + 1;
-      setInstanceIndex(nextIndex);
-      const vId = currentTrackIdRef.current ? ytCacheRef.current[currentTrackIdRef.current] : null;
-      if (vId) {
-        setPlayingUrl(`${INVIDIOUS_INSTANCES[nextIndex]}/latest_version?id=${vId}&itag=140`);
-      }
-    } else {
-      setPlaybackError("Impossible de se connecter aux serveurs audio.");
-      setStatus("idle");
-    }
-  }, [instanceIndex]);
 
   const loadAndPlayUrl = useCallback(async (track: Track) => {
     if (typeof document !== "undefined") {
@@ -378,37 +339,33 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     syncDbStats();
     lastPlayedSecondsRef.current = 0;
     currentTimeRef.current = 0;
-    setInstanceIndex(0); 
     
-    // Déclenche l'autorisation de lecture d'iOS instantanément
     unlockAudio();
 
     try {
-      let videoId = ytCacheRef.current[track.id];
-
-      // On passe par Vercel JUSTE pour choper l'ID
-      if (!videoId || !isValidYTId(videoId)) {
-        const query = `${track.artist} ${track.title} audio -"full album" -"1 hour" -"live" -"compilation"`;
-        const res = await fetch(`/api/youtube?q=${encodeURIComponent(query)}`);
-        if (!res.ok) throw new Error("Recherche impossible");
-        
-        const data = await res.json();
-        if (data.videoId) {
-           videoId = data.videoId;
-           saveToCache(track.id, videoId);
-        } else {
-           throw new Error("Titre introuvable");
-        }
+      const query = `${track.artist} ${track.title} audio -"full album" -"1 hour" -"live" -"compilation"`;
+      const res = await fetch(`/api/youtube?q=${encodeURIComponent(query)}`);
+      
+      if (!res.ok) {
+         setStatus("idle");
+         setTimeout(() => playNext(), 1500);
+         return;
       }
-
-      // Ton propre téléphone lit la musique sur le premier serveur Invidious
-      setPlayingUrl(`${INVIDIOUS_INSTANCES[0]}/latest_version?id=${videoId}&itag=140`);
-      setStatus("playing");
-      prefetchNextLogic();
-
+      
+      const data = await res.json();
+      
+      if (data.audioUrl) {
+         saveToCache(track.id, data.videoId);
+         setPlayingUrl(data.audioUrl);
+         setStatus("playing");
+         prefetchNextLogic();
+      } else {
+         setStatus("idle");
+         setTimeout(() => playNext(), 1500);
+      }
     } catch (error) {
-      setPlaybackError(error.message);
       setStatus("idle");
+      setTimeout(() => playNext(), 1500);
     }
   }, [prefetchNextLogic, syncDbStats, updateTopTracks, saveToCache, unlockAudio]);
 
@@ -617,14 +574,13 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     onDuration: setDuration,
     onEnded: handleEnded,
     setIsFullScreen, clearSeekRequest,
-    isMusicLoaded,
-    handleAudioError
+    isMusicLoaded
   }), [
     currentTrack, status, playingUrl, duration, volume,
     isFullScreen, seekRequest, queue, isShuffle, repeatMode,
     sleepModeState, sleepSeconds, playbackError,
     playTrack, playNext, playPrev, setSleepMode, toggleShuffle, toggleRepeat, togglePlayPause, seek, handleProgress, handleEnded, clearSeekRequest,
-    isMusicLoaded, handleAudioError
+    isMusicLoaded
   ]);
 
   return (
