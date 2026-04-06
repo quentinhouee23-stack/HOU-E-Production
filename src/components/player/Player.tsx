@@ -5,7 +5,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { useMusic } from "@/context/MusicContext";
 
 export function Player() {
-  const { playingUrl, status, volume, onDuration, onProgress, onEnded, seekRequest, clearSeekRequest, playbackError, setPlaybackError } = useMusic();
+  const { playingUrl, status, volume, onDuration, onProgress, onEnded, seekRequest, clearSeekRequest, playbackError, setPlaybackError, handleAudioError } = useMusic();
   const [isClient, setIsClient] = useState(false);
   
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -25,7 +25,7 @@ export function Player() {
 
     if (status === "playing") {
       audio.play().catch((err) => {
-        setPlaybackError("Autoplay bloqué par iOS. Merci d'interagir avec l'écran.");
+        setPlaybackError("Autoplay bloqué. Appuyez sur lecture.");
       });
     }
   }, [playingUrl, setPlaybackError, status]);
@@ -76,7 +76,7 @@ export function Player() {
           fontFamily: "monospace", fontSize: "14px", wordWrap: "break-word",
           boxShadow: "0px 4px 10px rgba(0,0,0,0.5)"
         }}>
-          <h3 style={{ margin: "0 0 10px 0", fontWeight: "bold" }}>🚨 ERREUR DE LECTURE</h3>
+          <h3 style={{ margin: "0 0 10px 0", fontWeight: "bold" }}>🚨 ÉTAT LECTURE</h3>
           <p style={{ margin: "0 0 15px 0" }}>{playbackError}</p>
           <button 
             onClick={() => {
@@ -105,14 +105,8 @@ export function Player() {
         }}
         onEnded={onEnded}
         onError={(e) => {
-          let errCode = audioRef.current?.error?.code;
-          let errMsg = "Erreur inconnue";
-          if (errCode === 1) errMsg = "Processus annulé par iOS (MEDIA_ERR_ABORTED)";
-          if (errCode === 2) errMsg = "Coupure réseau ou blocage serveur (MEDIA_ERR_NETWORK)";
-          if (errCode === 3) errMsg = "Fichier corrompu (MEDIA_ERR_DECODE)";
-          if (errCode === 4) errMsg = "Format refusé ou proxy mort (MEDIA_ERR_SRC_NOT_SUPPORTED)";
-          
-          setPlaybackError(`${errMsg}. URL: ${playingUrl?.substring(0, 50)}...`);
+          // 🟢 LA MAGIE EST ICI : Au lieu de mourir, le lecteur demande le prochain serveur !
+          handleAudioError();
         }}
         style={{ display: "none" }}
       />

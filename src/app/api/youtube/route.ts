@@ -4,12 +4,6 @@ import { createClient } from '@supabase/supabase-js';
 
 export const runtime = "nodejs";
 
-const PIPED_APIS = [
-  "https://api.piped.projectsegfau.lt",
-  "https://pipedapi.smnz.de",
-  "https://piped-api.garudalinux.org"
-];
-
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const supabase = createClient(supabaseUrl, supabaseKey);
@@ -53,6 +47,11 @@ export async function GET(req: Request) {
     } catch (e) {}
 
     // 2. API Piped en secours
+    const PIPED_APIS = [
+      "https://api.piped.projectsegfau.lt",
+      "https://pipedapi.smnz.de",
+      "https://pipedapi.kavin.rocks"
+    ];
     for (const api of PIPED_APIS) {
       try {
         const res = await fetchWithTimeout(`${api}/search?q=${encodeURIComponent(q)}&filter=videos`, 3000);
