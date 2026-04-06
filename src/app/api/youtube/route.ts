@@ -9,13 +9,11 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// 🟢 La liste de nos 5 serveurs de secours ultra-rapides
-const INVIDIOUS_INSTANCES = [
-  "https://inv.nadeko.net",
-  "https://invidious.nerdvpn.de",
-  "https://inv.tux.pizza",
-  "https://invidious.projectsegfau.lt",
-  "https://inv.bp.projectsegfau.lt"
+// 🟢 On utilise exclusivement l'API de streaming de Piped, conçue pour contourner les blocages
+const PIPED_APIS = [
+  "https://pipedapi.kavin.rocks",
+  "https://pipedapi.syncpundit.io",
+  "https://api.piped.projectsegfau.lt"
 ];
 
 async function incrementTokenUsage() {
@@ -43,6 +41,35 @@ function fetchWithTimeout(url: string, ms: number, options: RequestInit = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
   return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer));
+}
+
+// 🟢 LE MOTEUR DE STREAMING : Va chercher les liens M4A officiels de Piped
+async function getPipedAudioUrls(videoId: string): Promise<string | null> {
+  const urls: string[] = [];
+
+  for (const api of PIPED_APIS) {
+    try {
+      const res = await fetchWithTimeout(`${api}/streams/${videoId}`, 3000);
+      if (!res.ok) continue;
+      
+      const data = await res.json();
+      const audioStreams = data.audioStreams || [];
+      
+      // On cherche en priorité absolue du M4A/MP4 audio (Compatibilité iOS parfaite en veille)
+      const bestAudio = audioStreams.find((s: any) => s.mimeType.includes("mp4") || s.mimeType.includes("m4a")) 
+                     || audioStreams.find((s: any) => s.mimeType.includes("webm"));
+                     
+      if (bestAudio && bestAudio.url) {
+        console.log(`✅ Flux audio trouvé sur ${api}`);
+        urls.push(bestAudio.url);
+      }
+    } catch (e) {
+      // API down ou timeout, on passe à la suivante
+    }
+  }
+
+  // On renvoie tous les liens trouvés séparés par une virgule pour le Player de secours
+  return urls.length > 0 ? urls.join(',') : null;
 }
 
 async function scrapeYouTubeDirect(q: string, timeoutMs: number): Promise<string | null> {
@@ -108,13 +135,19 @@ export async function GET(req: Request) {
     const q = searchParams.get("q");
     const directVideoId = searchParams.get("videoId"); 
 
-    // 🟢 On génère INSTANTANÉMENT une liste de 5 URLs audios sans appeler d'API externe (0 risque de crash serveur)
+    // 🟢 MODE DIRECT : On connaît le videoId, on veut juste les URLs de streaming Piped
     if (directVideoId) {
-      const audioUrls = INVIDIOUS_INSTANCES.map(inst => `${inst}/latest_version?id=${directVideoId}&itag=140&local=true`).join(',');
-      return NextResponse.json({ audioUrl: audioUrls });
+      console.log(`🎵 Récupération streams Piped pour : ${directVideoId}`);
+      const audioUrls = await getPipedAudioUrls(directVideoId);
+      if (audioUrls) {
+        return NextResponse.json({ audioUrl: audioUrls });
+      }
+      return NextResponse.json({ error: "Aucun flux audio disponible" }, { status: 404 });
     }
 
     if (!q) return NextResponse.json({ error: "Recherche vide" }, { status: 400 });
+
+    console.log(`🔍 Recherche ID pour : ${q}`);
 
     // 1. Recherche de l'ID vidéo
     let videoId = await scrapeYouTubeDirect(q, 2500);
@@ -125,10 +158,14 @@ export async function GET(req: Request) {
 
     if (!videoId) return NextResponse.json({ error: "Aucun résultat trouvé" }, { status: 404 });
 
-    // 2. Génération du tableau de secours
-    const audioUrls = INVIDIOUS_INSTANCES.map(inst => `${inst}/latest_version?id=${videoId}&itag=140&local=true`).join(',');
+    // 2. Génération des flux audio réels
+    const audioUrls = await getPipedAudioUrls(videoId);
 
-    return NextResponse.json({ videoId, audioUrl: audioUrls });
+    if (audioUrls) {
+      return NextResponse.json({ videoId, audioUrl: audioUrls });
+    }
+
+    return NextResponse.json({ error: "Flux audio introuvable pour cette vidéo" }, { status: 404 });
 
   } catch (e) {
     return NextResponse.json({ error: "Erreur serveur" }, { status: 500 });
