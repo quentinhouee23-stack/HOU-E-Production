@@ -74,13 +74,16 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   const repeatModeRef = useRef<"off" | "all" | "one">("off");
   const playHistoryRef = useRef<string[]>([]);
   const currentTimeRef = useRef(0);
+  
   const ytCacheRef = useRef<Record<string, string>>({});
+  const audioUrlCacheRef = useRef<Record<string, string>>({});
+  
   const listenAccumulatorRef = useRef(0);
   const lastPlayedSecondsRef = useRef(0);
 
-  const unlockAudio = useCallback((videoId?: string) => {
+  const unlockAudio = useCallback(() => {
     if (typeof window === "undefined") return;
-    window.dispatchEvent(new CustomEvent("iosUnlock", { detail: { videoId } }));
+    window.dispatchEvent(new CustomEvent("iosUnlock"));
   }, []);
 
   useEffect(() => {
@@ -105,10 +108,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
         const parsedTrack = JSON.parse(savedTrack);
         setCurrentTrack(parsedTrack);
         currentTrackIdRef.current = parsedTrack.id;
-        const cachedVideoId = currentCache[parsedTrack.id];
-        if (isValidYTId(cachedVideoId)) {
-          setPlayingUrl(`https://www.youtube.com/watch?v=${cachedVideoId}`);
-        }
+        setPlayingUrl(null);
       }
 
       const savedQueue = localStorage.getItem("houee_last_queue");
@@ -118,7 +118,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
         queueRef.current = parsedQueue;
       }
     } catch (e) {
-      console.error("Erreur lecture cache audio", e);
+      console.error("Erreur lecture cache", e);
     } finally {
       setIsMusicLoaded(true);
     }
@@ -335,13 +335,14 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   const loadAndPlayUrl = useCallback(async (track: Track) => {
     if (typeof document !== "undefined") {
       document.querySelectorAll('audio').forEach(audio => {
-        if (audio.id === 'ghost-audio') return; 
+        if (audio.hasAttribute('data-main-player')) return; 
         audio.pause();
         audio.removeAttribute('src');
         audio.load();
       });
       window.dispatchEvent(new Event('stopPreview'));
     }
+    
     setStatus("loading");
     setCurrentTrack(track);
     currentTrackIdRef.current = track.id;
@@ -350,31 +351,54 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     lastPlayedSecondsRef.current = 0;
     currentTimeRef.current = 0;
     
-    const cachedId = ytCacheRef.current[track.id];
-    if (cachedId && isValidYTId(cachedId)) {
-      unlockAudio(cachedId); 
-      setPlayingUrl(`https://www.youtube.com/watch?v=${cachedId}`);
-      setStatus("playing");
-      prefetchNextLogic();
-      return;
-    }
-    
     unlockAudio();
+
+    // 1. Vérification du cache local
+    const cachedVideoId = ytCacheRef.current[track.id];
+    if (cachedVideoId && isValidYTId(cachedVideoId)) {
+      const cachedAudioUrl = audioUrlCacheRef.current[cachedVideoId];
+      if (cachedAudioUrl) {
+        setPlayingUrl(cachedAudioUrl);
+        setStatus("playing");
+        prefetchNextLogic();
+        return;
+      }
+      
+      // Demander l'URL direct à Vercel si on a déjà l'ID
+      try {
+        const res = await fetch(`/api/youtube?videoId=${cachedVideoId}`);
+        const data = await res.json();
+        if (data.audioUrl) {
+          audioUrlCacheRef.current[cachedVideoId] = data.audioUrl;
+          setPlayingUrl(data.audioUrl);
+          setStatus("playing");
+          prefetchNextLogic();
+          return;
+        }
+      } catch (e) {}
+    }
+
+    // 2. Recherche complète via notre API Vercel
     try {
       const query = `${track.artist} ${track.title} audio -"full album" -"1 hour" -"live" -"compilation"`;
       const res = await fetch(`/api/youtube?q=${encodeURIComponent(query)}`);
       const data = await res.json();
-      if (data.videoId && isValidYTId(data.videoId)) {
+      
+      if (data.audioUrl) {
         saveToCache(track.id, data.videoId);
-        setPlayingUrl(`https://www.youtube.com/watch?v=${data.videoId}`);
+        audioUrlCacheRef.current[data.videoId] = data.audioUrl;
+        setPlayingUrl(data.audioUrl);
         setStatus("playing");
         prefetchNextLogic();
       } else {
+        console.warn("❌ Aucun flux audio trouvé.");
         setStatus("idle");
+        setTimeout(() => playNext(), 2000); 
       }
     } catch (error) {
       console.error("Erreur API :", error);
       setStatus("idle");
+      setTimeout(() => playNext(), 2000); 
     }
   }, [prefetchNextLogic, syncDbStats, updateTopTracks, saveToCache, unlockAudio]);
 
@@ -568,9 +592,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       for (const [action, handler] of actionHandlers) {
         try {
           navigator.mediaSession.setActionHandler(action, handler);
-        } catch (error) {
-          console.warn(`L'action "${action}" n'est pas supportée.`);
-        }
+        } catch (error) {}
       }
     }
   }, [currentTrack, status, playNext, playPrev, togglePlayPause]);
