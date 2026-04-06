@@ -38,9 +38,19 @@ interface MusicContextValue {
   setIsFullScreen: (val: boolean) => void;
   clearSeekRequest: () => void;
   isMusicLoaded: boolean;
+  handleAudioError: () => void;
 }
 
 const MusicContext = createContext<MusicContextValue | null>(null);
+
+// Les serveurs audio directs (M4A)
+const INVIDIOUS_INSTANCES = [
+  "https://inv.tux.pizza",
+  "https://invidious.nerdvpn.de",
+  "https://invidious.fdn.fr",
+  "https://inv.nadeko.net",
+  "https://invidious.perennialte.ch"
+];
 
 function getISOWeek(date: Date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
@@ -69,6 +79,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   const [sleepModeState, setSleepModeState] = useState<SleepMode>(null);
   const [sleepSeconds, setSleepSeconds] = useState<number | null>(null);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
+  const [instanceIndex, setInstanceIndex] = useState(0);
   
   const sleepModeRef = useRef<SleepMode>(null);
   const queueRef = useRef<Track[]>([]);
@@ -79,7 +90,6 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   const currentTimeRef = useRef(0);
   
   const ytCacheRef = useRef<Record<string, string>>({});
-  const audioUrlCacheRef = useRef<Record<string, string>>({});
   const listenAccumulatorRef = useRef(0);
   const lastPlayedSecondsRef = useRef(0);
 
@@ -287,45 +297,18 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     }
   }, [status, addMinuteToStats, duration]);
 
-  // 🟢 LE MOTEUR COBALT + ALLORIGINS : 100% Client, sans erreur CORS
-  const fetchAudioLink = async (vId: string): Promise<string | null> => {
-    // 1. Essai avec Cobalt API (Le plus puissant pour l'audio M4A)
-    const cobaltNodes = ["https://api.cobalt.tools", "https://cobalt.kwiq.dev"];
-    for (const node of cobaltNodes) {
-      try {
-        const res = await fetch(`${node}/api/json`, {
-          method: "POST",
-          headers: { "Accept": "application/json", "Content-Type": "application/json" },
-          body: JSON.stringify({
-            url: `https://www.youtube.com/watch?v=${vId}`,
-            isAudioOnly: true,
-            aFormat: "m4a"
-          })
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data && data.url) return data.url;
+  const prefetchTrack = useCallback((track: Track) => {
+    if (!track || ytCacheRef.current[track.id]) return;
+    const query = `${track.artist} ${track.title} audio -"full album" -"1 hour" -"live" -"compilation"`;
+    fetch(`/api/youtube?q=${encodeURIComponent(query)}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.videoId && isValidYTId(data.videoId)) {
+          saveToCache(track.id, data.videoId);
         }
-      } catch(e) {}
-    }
-
-    // 2. Secours : Piped via AllOrigins (Pour by-pass totalement le CORS)
-    const PIPED_APIS = ["https://pipedapi.kavin.rocks", "https://api.piped.projectsegfau.lt"];
-    for (const api of PIPED_APIS) {
-      try {
-        const fetchUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(`${api}/streams/${vId}`)}`;
-        const res = await fetch(fetchUrl);
-        if (res.ok) {
-          const data = await res.json();
-          const parsed = JSON.parse(data.contents);
-          const best = parsed.audioStreams?.find((s: any) => s.mimeType.includes("m4a") || s.mimeType.includes("mp4"));
-          if (best && best.url) return best.url;
-        }
-      } catch(e) {}
-    }
-
-    return null;
-  };
+      })
+      .catch(() => {});
+  }, [saveToCache]);
 
   const prefetchNextLogic = useCallback(() => {
     const q = queueRef.current;
@@ -342,7 +325,8 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
         nextTrack = q[0];
       }
     }
-  }, []);
+    if (nextTrack) prefetchTrack(nextTrack);
+  }, [prefetchTrack]);
 
   useEffect(() => {
     let syncTimeout: NodeJS.Timeout;
@@ -359,6 +343,21 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     }
     return () => clearTimeout(syncTimeout);
   }, [user, currentTrack, status]);
+
+  // Si le lecteur audio plante (ex: lien mort), il appelle cette fonction pour switcher de serveur Invidious
+  const handleAudioError = useCallback(() => {
+    if (instanceIndex < INVIDIOUS_INSTANCES.length - 1) {
+      const nextIndex = instanceIndex + 1;
+      setInstanceIndex(nextIndex);
+      const vId = currentTrackIdRef.current ? ytCacheRef.current[currentTrackIdRef.current] : null;
+      if (vId) {
+        setPlayingUrl(`${INVIDIOUS_INSTANCES[nextIndex]}/latest_version?id=${vId}&itag=140`);
+      }
+    } else {
+      setPlaybackError("Impossible de se connecter aux serveurs audio.");
+      setStatus("idle");
+    }
+  }, [instanceIndex]);
 
   const loadAndPlayUrl = useCallback(async (track: Track) => {
     if (typeof document !== "undefined") {
@@ -379,40 +378,35 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     syncDbStats();
     lastPlayedSecondsRef.current = 0;
     currentTimeRef.current = 0;
+    setInstanceIndex(0); 
     
+    // Déclenche l'autorisation de lecture d'iOS instantanément
     unlockAudio();
 
     try {
       let videoId = ytCacheRef.current[track.id];
 
-      // 1. Vercel ne sert qu'à trouver l'ID Youtube (très rapide et fiable)
+      // On passe par Vercel JUSTE pour choper l'ID
       if (!videoId || !isValidYTId(videoId)) {
         const query = `${track.artist} ${track.title} audio -"full album" -"1 hour" -"live" -"compilation"`;
         const res = await fetch(`/api/youtube?q=${encodeURIComponent(query)}`);
-        if (!res.ok) throw new Error("Musique introuvable");
+        if (!res.ok) throw new Error("Recherche impossible");
         
         const data = await res.json();
         if (data.videoId) {
            videoId = data.videoId;
            saveToCache(track.id, videoId);
         } else {
-           throw new Error("ID Youtube introuvable");
+           throw new Error("Titre introuvable");
         }
       }
 
-      // 2. Ton téléphone va chercher le flux M4A avec Cobalt/AllOrigins
-      const audioUrl = await fetchAudioLink(videoId);
-
-      if (audioUrl) {
-        setPlayingUrl(audioUrl);
-        setStatus("playing");
-        prefetchNextLogic();
-      } else {
-        throw new Error("Impossible de générer le flux audio.");
-      }
+      // Ton propre téléphone lit la musique sur le premier serveur Invidious
+      setPlayingUrl(`${INVIDIOUS_INSTANCES[0]}/latest_version?id=${videoId}&itag=140`);
+      setStatus("playing");
+      prefetchNextLogic();
 
     } catch (error) {
-      console.error(error);
       setPlaybackError(error.message);
       setStatus("idle");
     }
@@ -623,13 +617,14 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     onDuration: setDuration,
     onEnded: handleEnded,
     setIsFullScreen, clearSeekRequest,
-    isMusicLoaded
+    isMusicLoaded,
+    handleAudioError
   }), [
     currentTrack, status, playingUrl, duration, volume,
     isFullScreen, seekRequest, queue, isShuffle, repeatMode,
     sleepModeState, sleepSeconds, playbackError,
     playTrack, playNext, playPrev, setSleepMode, toggleShuffle, toggleRepeat, togglePlayPause, seek, handleProgress, handleEnded, clearSeekRequest,
-    isMusicLoaded
+    isMusicLoaded, handleAudioError
   ]);
 
   return (

@@ -5,13 +5,30 @@ import React, { useEffect, useRef, useState } from "react";
 import { useMusic } from "@/context/MusicContext";
 
 export function Player() {
-  const { playingUrl, status, volume, onDuration, onProgress, onEnded, seekRequest, clearSeekRequest, playbackError, setPlaybackError } = useMusic();
+  const { playingUrl, status, volume, onDuration, onProgress, onEnded, seekRequest, clearSeekRequest, playbackError, setPlaybackError, handleAudioError } = useMusic();
   const [isClient, setIsClient] = useState(false);
   
   const audioRef = useRef<HTMLAudioElement>(null);
   const lastUrlRef = useRef<string | null>(null);
 
   useEffect(() => setIsClient(true), []);
+
+  // 🟢 L'ASTUCE ANTI-BLOCAGE IOS
+  // On écoute le signal "iosUnlock" envoyé quand tu cliques sur la musique.
+  // On joue immédiatement un son vierge pour dire à Apple "Je suis un lecteur actif ! Ne me bloque pas !".
+  useEffect(() => {
+    const handleUnlock = () => {
+      if (audioRef.current && audioRef.current.paused) {
+        const oldSrc = audioRef.current.src;
+        if (!oldSrc || oldSrc === "" || oldSrc === window.location.href) {
+           audioRef.current.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
+        }
+        audioRef.current.play().catch(() => {});
+      }
+    };
+    window.addEventListener("iosUnlock", handleUnlock as EventListener);
+    return () => window.removeEventListener("iosUnlock", handleUnlock as EventListener);
+  }, []);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -25,8 +42,7 @@ export function Player() {
 
     if (status === "playing") {
       audio.play().catch((err) => {
-        // Un autoplay refusé se gère en douceur.
-        console.warn("Autoplay bloqué");
+        console.warn("Autoplay silencieux bloqué");
       });
     }
   }, [playingUrl, status]);
@@ -106,14 +122,8 @@ export function Player() {
         }}
         onEnded={onEnded}
         onError={(e) => {
-          let errCode = audioRef.current?.error?.code;
-          let errMsg = "Erreur inconnue";
-          if (errCode === 1) errMsg = "Processus annulé par iOS (MEDIA_ERR_ABORTED)";
-          if (errCode === 2) errMsg = "Coupure réseau ou blocage serveur (MEDIA_ERR_NETWORK)";
-          if (errCode === 3) errMsg = "Fichier corrompu (MEDIA_ERR_DECODE)";
-          if (errCode === 4) errMsg = "Format refusé ou lien expiré (MEDIA_ERR_SRC_NOT_SUPPORTED)";
-          
-          setPlaybackError(`${errMsg}`);
+          // Si un serveur Invidious est radin ou lent, on appelle le Cerveau pour changer immédiatement !
+          handleAudioError();
         }}
         style={{ display: "none" }}
       />

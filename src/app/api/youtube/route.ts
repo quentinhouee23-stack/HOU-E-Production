@@ -4,6 +4,12 @@ import { createClient } from '@supabase/supabase-js';
 
 export const runtime = "nodejs";
 
+const PIPED_APIS = [
+  "https://api.piped.projectsegfau.lt",
+  "https://pipedapi.smnz.de",
+  "https://pipedapi.kavin.rocks"
+];
+
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const supabase = createClient(supabaseUrl, supabaseKey);
@@ -30,10 +36,10 @@ export async function GET(req: Request) {
 
     if (!q) return NextResponse.json({ error: "Recherche vide" }, { status: 400 });
 
-    // 1. Scraping direct (Ultra-rapide)
+    // 1. Scraping direct (Ultra-rapide, sans proxy)
     try {
       const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`;
-      const res = await fetchWithTimeout(searchUrl, 3000, {
+      const res = await fetchWithTimeout(searchUrl, 2500, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
           'Cookie': 'CONSENT=YES+cb.20210328-17-p0.en+FX+478;'
@@ -47,14 +53,9 @@ export async function GET(req: Request) {
     } catch (e) {}
 
     // 2. API Piped en secours
-    const PIPED_APIS = [
-      "https://api.piped.projectsegfau.lt",
-      "https://pipedapi.smnz.de",
-      "https://pipedapi.kavin.rocks"
-    ];
     for (const api of PIPED_APIS) {
       try {
-        const res = await fetchWithTimeout(`${api}/search?q=${encodeURIComponent(q)}&filter=videos`, 3000);
+        const res = await fetchWithTimeout(`${api}/search?q=${encodeURIComponent(q)}&filter=videos`, 2500);
         if (res.ok) {
           const data = await res.json();
           if (data.items && data.items.length > 0) {
@@ -65,7 +66,7 @@ export async function GET(req: Request) {
       } catch (e) {}
     }
 
-    // 3. API Google ultime
+    // 3. API Google ultime (Si tout le reste échoue)
     const apiKey = process.env.YOUTUBE_API_KEY;
     if (apiKey) {
       try {
