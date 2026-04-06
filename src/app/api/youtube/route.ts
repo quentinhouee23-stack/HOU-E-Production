@@ -8,15 +8,12 @@ export const maxDuration = 20;
 const PIPED_APIS = [
   "https://pipedapi.kavin.rocks",
   "https://pipedapi.syncpundit.io",
-  "https://api.piped.projectsegfau.lt",
-  "https://pipedapi.smnz.de"
+  "https://api.piped.projectsegfau.lt"
 ];
 
-// 🟢 Liste mise à jour avec les serveurs les plus stables en premier
 const INVIDIOUS_APIS = [
   "https://inv.tux.pizza",
   "https://invidious.nerdvpn.de",
-  "https://invidious.fdn.fr",
   "https://inv.nadeko.net"
 ];
 
@@ -40,7 +37,6 @@ function fetchWithTimeout(url: string, ms: number, options: RequestInit = {}) {
 }
 
 async function searchVideoId(q: string): Promise<string | null> {
-  // 1. On cherche via Piped
   for (const api of PIPED_APIS) {
     try {
       const res = await fetchWithTimeout(`${api}/search?q=${encodeURIComponent(q)}&filter=videos`, 3000);
@@ -54,7 +50,6 @@ async function searchVideoId(q: string): Promise<string | null> {
     } catch (e) {}
   }
 
-  // 2. Secours : YouTube direct avec validation des cookies
   try {
     const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`;
     const res = await fetchWithTimeout(searchUrl, 3000, {
@@ -73,11 +68,9 @@ async function searchVideoId(q: string): Promise<string | null> {
   return null;
 }
 
-// 🟢 LE RADAR : Vérifie si le lien audio est vraiment vivant avant de l'envoyer au lecteur
 async function checkUrlAlive(url: string): Promise<boolean> {
   try {
     const res = await fetchWithTimeout(url, 2000, { method: 'HEAD' });
-    // 200 (OK), 206 (Partial Content), ou 302 (Redirection vers le fichier)
     return res.ok || res.status === 302 || res.status === 206;
   } catch (e) {
     return false;
@@ -85,28 +78,24 @@ async function checkUrlAlive(url: string): Promise<boolean> {
 }
 
 async function getAudioUrl(videoId: string): Promise<string | null> {
-  // 1. Essayer Piped
+  // 1. Piped : On exige du format MP4/M4A. Pas de WebM autorisé car iOS le rejette !
   for (const api of PIPED_APIS) {
     try {
       const res = await fetchWithTimeout(`${api}/streams/${videoId}`, 3000);
       if (res.ok) {
         const data = await res.json();
         const streams = data.audioStreams || [];
-        const best = streams.find((s: any) => s.mimeType.includes("m4a") || s.mimeType.includes("mp4"))
-                  || streams.find((s: any) => s.mimeType.includes("webm"));
+        const best = streams.find((s: any) => s.mimeType.includes("m4a") || s.mimeType.includes("mp4"));
         if (best && best.url) return best.url;
       }
     } catch (e) {}
   }
 
-  // 2. Invidious avec VÉRIFICATION D'ÉTAT (Le Radar)
+  // 2. Invidious : Itag 140 = M4A (100% compatible Apple)
   for (const api of INVIDIOUS_APIS) {
     const testUrl = `${api}/latest_version?id=${videoId}&itag=140&local=true`;
     const isAlive = await checkUrlAlive(testUrl);
-    
-    if (isAlive) {
-      return testUrl; // On ne renvoie le lien que s'il est 100% fonctionnel
-    }
+    if (isAlive) return testUrl;
   }
 
   return null;
@@ -136,7 +125,7 @@ export async function GET(req: Request) {
       return NextResponse.json({ videoId, audioUrl });
     }
 
-    return NextResponse.json({ error: "Flux audio introuvable" }, { status: 404 });
+    return NextResponse.json({ error: "Flux audio introuvable en format M4A" }, { status: 404 });
   } catch (e) {
     return NextResponse.json({ error: "Erreur serveur" }, { status: 500 });
   }
