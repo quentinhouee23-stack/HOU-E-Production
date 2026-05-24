@@ -77,11 +77,10 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   const repeatModeRef = useRef<"off" | "all" | "one">("off");
   const playHistoryRef = useRef<string[]>([]);
   const currentTimeRef = useRef(0);
-  
   const ytCacheRef = useRef<Record<string, string>>({});
-  const audioUrlCacheRef = useRef<Record<string, string>>({});
-  const listenAccumulatorRef = useRef(0);
-  const lastPlayedSecondsRef = useRef(0);
+  
+  // 🟢 Talkie-Walkie pour éviter l'erreur de compilation React
+  const playNextRef = useRef<() => void>(() => {});
 
   const unlockAudio = useCallback(() => {
     if (typeof window === "undefined") return;
@@ -178,82 +177,6 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     return () => clearInterval(interval);
   }, [status, sleepSeconds]);
 
-  const syncDbStats = useCallback(async () => {
-    if (!user) return;
-    const stats = JSON.parse(localStorage.getItem("dailyStats") || "null");
-    const top = JSON.parse(localStorage.getItem("weeklyTopTracks") || "null");
-    const updates: any = {};
-    if (stats) updates.daily_stats = stats;
-    if (top) updates.top_tracks = top;
-    if (Object.keys(updates).length > 0) {
-      await supabase.from('profiles').update(updates).eq('id', user.id);
-    }
-  }, [user]);
-
-  const checkWeekRollover = useCallback(async () => {
-    const currentWeekStr = getISOWeek(new Date());
-    const savedWeekStr = localStorage.getItem("currentWeekStr");
-    if (!savedWeekStr) {
-      localStorage.setItem("currentWeekStr", currentWeekStr);
-      return;
-    }
-    if (savedWeekStr !== currentWeekStr) {
-      const oldStats = JSON.parse(localStorage.getItem("dailyStats") || "null");
-      const oldTracks = JSON.parse(localStorage.getItem("weeklyTopTracks") || "[]");
-      if (oldStats) localStorage.setItem("lastWeekStats", JSON.stringify(oldStats));
-      if (oldTracks.length > 0) localStorage.setItem("lastWeekTopTracks", JSON.stringify(oldTracks));
-      const emptyDaily = [
-        { day: "Lun", minutes: 0 }, { day: "Mar", minutes: 0 }, { day: "Mer", minutes: 0 },
-        { day: "Jeu", minutes: 0 }, { day: "Ven", minutes: 0 }, { day: "Sam", minutes: 0 }, { day: "Dim", minutes: 0 },
-      ];
-      localStorage.setItem("dailyStats", JSON.stringify(emptyDaily));
-      localStorage.setItem("weeklyTopTracks", JSON.stringify([]));
-      localStorage.setItem("currentWeekStr", currentWeekStr);
-      if (user) {
-        await supabase.from('profiles').update({
-          last_week_stats: oldStats,
-          last_week_top_tracks: oldTracks,
-          daily_stats: emptyDaily,
-          top_tracks: []
-        }).eq('id', user.id);
-      }
-    }
-  }, [user]);
-
-  const addMinuteToStats = useCallback(async () => {
-    await checkWeekRollover();
-    const days = ["Dim", "Lun", "Mar", "Mer", "Jeu", "Ven", "Sam"];
-    const todayStr = days[new Date().getDay()];
-    let stats = JSON.parse(localStorage.getItem("dailyStats") || "null");
-    if (!stats || stats.length === 0) {
-      stats = [
-        { day: "Lun", minutes: 0 }, { day: "Mar", minutes: 0 }, { day: "Mer", minutes: 0 },
-        { day: "Jeu", minutes: 0 }, { day: "Ven", minutes: 0 }, { day: "Sam", minutes: 0 }, { day: "Dim", minutes: 0 },
-      ];
-    }
-    const todayIndex = stats.findIndex((s: any) => s.day === todayStr);
-    if (todayIndex !== -1) {
-      stats[todayIndex].minutes += 1;
-    }
-    localStorage.setItem("dailyStats", JSON.stringify(stats));
-    window.dispatchEvent(new Event("statsUpdated"));
-  }, [checkWeekRollover]);
-
-  const updateTopTracks = useCallback(async (track: Track) => {
-    await checkWeekRollover();
-    let top = JSON.parse(localStorage.getItem("weeklyTopTracks") || "[]");
-    const existing = top.find((t: any) => t.id === track.id);
-    if (existing) {
-      existing.plays += 1;
-    } else {
-      top.push({ ...track, plays: 1 });
-    }
-    top.sort((a: any, b: any) => b.plays - a.plays);
-    top = top.slice(0, 10);
-    localStorage.setItem("weeklyTopTracks", JSON.stringify(top));
-    window.dispatchEvent(new Event("statsUpdated"));
-  }, [checkWeekRollover]);
-
   const handleProgress = useCallback((state: any) => {
     const currentPlayed = state.playedSeconds || 0;
     currentTimeRef.current = currentPlayed;
@@ -271,21 +194,18 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     window.dispatchEvent(new CustomEvent("musicTimeUpdate", {
       detail: { currentTime: currentPlayed }
     }));
+  }, [duration]);
 
-    if (status === "playing") {
-      const delta = currentPlayed - lastPlayedSecondsRef.current;
-      lastPlayedSecondsRef.current = currentPlayed;
-      if (delta > 0 && delta <= 2) {
-        listenAccumulatorRef.current += delta;
-        if (listenAccumulatorRef.current >= 60) {
-          listenAccumulatorRef.current -= 60;
-          addMinuteToStats();
-        }
-      }
-    } else {
-      lastPlayedSecondsRef.current = currentPlayed;
-    }
-  }, [status, addMinuteToStats, duration]);
+  const prefetchTrack = useCallback((track: Track) => {
+    if (!track || ytCacheRef.current[track.id]) return;
+    const query = `${track.artist} ${track.title} audio -"full album" -"live"`;
+    fetch(`/api/youtube?q=${encodeURIComponent(query)}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.videoId && isValidYTId(data.videoId)) saveToCache(track.id, data.videoId);
+      })
+      .catch(() => {});
+  }, [saveToCache]);
 
   const prefetchNextLogic = useCallback(() => {
     const q = queueRef.current;
@@ -302,72 +222,49 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
         nextTrack = q[0];
       }
     }
-  }, []);
-
-  useEffect(() => {
-    let syncTimeout: NodeJS.Timeout;
-    if (user && currentTrack && status === "playing") {
-      syncTimeout = setTimeout(() => {
-        supabase.from('profiles').update({
-          current_listening: {
-            title: currentTrack.title,
-            artist: currentTrack.artist,
-            image: currentTrack.image
-          }
-        }).eq('id', user.id).then();
-      }, 10000);
-    }
-    return () => clearTimeout(syncTimeout);
-  }, [user, currentTrack, status]);
+    if (nextTrack) prefetchTrack(nextTrack);
+  }, [prefetchTrack]);
 
   const loadAndPlayUrl = useCallback(async (track: Track) => {
-    if (typeof document !== "undefined") {
-      document.querySelectorAll('audio').forEach(audio => {
-        if (audio.hasAttribute('data-main-player')) return; 
-        audio.pause();
-        audio.removeAttribute('src');
-        audio.load();
-      });
-      window.dispatchEvent(new Event('stopPreview'));
-    }
-    
     setPlaybackError(null);
     setStatus("loading");
     setCurrentTrack(track);
     currentTrackIdRef.current = track.id;
-    updateTopTracks(track);
-    syncDbStats();
-    lastPlayedSecondsRef.current = 0;
     currentTimeRef.current = 0;
     
     unlockAudio();
 
     try {
-      const query = `${track.artist} ${track.title} audio -"full album" -"1 hour" -"live" -"compilation"`;
-      const res = await fetch(`/api/youtube?q=${encodeURIComponent(query)}`);
-      
-      if (!res.ok) {
-         setStatus("idle");
-         setTimeout(() => playNext(), 1500);
-         return;
+      let videoId = ytCacheRef.current[track.id];
+
+      // On demande juste l'ID Youtube
+      if (!videoId || !isValidYTId(videoId)) {
+        const query = `${track.artist} ${track.title} audio -"full album" -"1 hour" -"live" -"compilation"`;
+        const res = await fetch(`/api/youtube?q=${encodeURIComponent(query)}`);
+        
+        if (!res.ok) throw new Error("Musique introuvable.");
+        
+        const data = await res.json();
+        if (data.videoId) {
+           videoId = data.videoId;
+           saveToCache(track.id, videoId);
+        } else {
+           throw new Error("ID introuvable.");
+        }
       }
-      
-      const data = await res.json();
-      
-      if (data.audioUrl) {
-         saveToCache(track.id, data.videoId);
-         setPlayingUrl(data.audioUrl);
-         setStatus("playing");
-         prefetchNextLogic();
-      } else {
-         setStatus("idle");
-         setTimeout(() => playNext(), 1500);
-      }
+
+      // On passe le VIDEO ID directement au lecteur Youtube
+      setPlayingUrl(videoId);
+      setStatus("playing");
+      prefetchNextLogic();
+
     } catch (error) {
+      setPlaybackError(error.message);
       setStatus("idle");
-      setTimeout(() => playNext(), 1500);
+      // On utilise le Talkie-Walkie pour Zapper sans planter
+      setTimeout(() => playNextRef.current(), 2000);
     }
-  }, [prefetchNextLogic, syncDbStats, updateTopTracks, saveToCache, unlockAudio]);
+  }, [prefetchNextLogic, saveToCache, unlockAudio]);
 
   const playTrack = useCallback(async (track: Track, newQueue?: Track[]) => {
     if (newQueue && newQueue.length > 0) {
@@ -465,13 +362,14 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     }
   }, [loadAndPlayUrl, playRadioTrack]);
 
+  // 🟢 On met à jour le Talkie-Walkie
+  useEffect(() => {
+    playNextRef.current = playNext;
+  }, [playNext]);
+
   const playPrev = useCallback(() => {
     const q = queueRef.current;
-    if (currentTimeRef.current > 3) {
-      setSeekRequest(0);
-      return;
-    }
-    if (q.length === 0) {
+    if (currentTimeRef.current > 3 || q.length === 0) {
       setSeekRequest(0);
       return;
     }
@@ -481,8 +379,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       playHistoryRef.current.push(prevTrack.id);
       loadAndPlayUrl(prevTrack);
     } else {
-      const prevTrack = q[q.length - 1];
-      loadAndPlayUrl(prevTrack);
+      loadAndPlayUrl(q[q.length - 1]);
     }
   }, [loadAndPlayUrl]);
 
@@ -492,37 +389,28 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const toggleRepeat = useCallback(() => {
-    const nextMode = repeatModeRef.current === "off" ? "all" :
-      repeatModeRef.current === "all" ? "one" : "off";
+    const nextMode = repeatModeRef.current === "off" ? "all" : repeatModeRef.current === "all" ? "one" : "off";
     repeatModeRef.current = nextMode;
     setRepeatMode(nextMode);
   }, []);
 
   const togglePlayPause = useCallback(() => {
     unlockAudio(); 
-    if (status === "playing") {
-      setStatus("paused");
-    } else {
-      if (!playingUrl && currentTrack) {
-        loadAndPlayUrl(currentTrack);
-      } else {
-        setStatus("playing");
-      }
-    }
+    if (status === "playing") setStatus("paused");
+    else if (!playingUrl && currentTrack) loadAndPlayUrl(currentTrack);
+    else setStatus("playing");
   }, [status, playingUrl, currentTrack, loadAndPlayUrl, unlockAudio]);
 
   const seek = useCallback((time: number) => {
     setSeekRequest(time);
     window.dispatchEvent(new CustomEvent("musicTimeUpdate", { detail: { currentTime: time } }));
-    lastPlayedSecondsRef.current = time;
   }, []);
 
   const clearSeekRequest = useCallback(() => setSeekRequest(null), []);
 
   const handleEnded = useCallback(() => {
     if (repeatModeRef.current === "one" && currentTrackIdRef.current) {
-      const q = queueRef.current;
-      const trackToReplay = q.find(t => t.id === currentTrackIdRef.current) || currentTrack;
+      const trackToReplay = queueRef.current.find(t => t.id === currentTrackIdRef.current) || currentTrack;
       if (trackToReplay) {
         loadAndPlayUrl(trackToReplay);
         return;
@@ -536,58 +424,28 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       navigator.mediaSession.metadata = new MediaMetadata({
         title: currentTrack.title,
         artist: currentTrack.artist,
-        album: 'HOUÉE',
-        artwork: [
-          {
-            src: currentTrack.image || 'https://api.dicebear.com/9.x/shapes/png?seed=music',
-            sizes: '512x512',
-            type: 'image/png'
-          }
-        ]
+        artwork: [{ src: currentTrack.image || 'https://api.dicebear.com/9.x/shapes/png?seed=music', sizes: '512x512', type: 'image/png' }]
       });
-
       navigator.mediaSession.playbackState = status === "playing" ? "playing" : "paused";
-
       const actionHandlers = [
-        ['play', togglePlayPause],
-        ['pause', () => setStatus("paused")],
-        ['previoustrack', playPrev],
-        ['nexttrack', playNext],
+        ['play', togglePlayPause], ['pause', () => setStatus("paused")],
+        ['previoustrack', playPrev], ['nexttrack', playNext],
         ['stop', () => { setStatus("idle"); setPlayingUrl(null); }]
       ];
-
       for (const [action, handler] of actionHandlers) {
-        try {
-          navigator.mediaSession.setActionHandler(action, handler);
-        } catch (error) {}
+        try { navigator.mediaSession.setActionHandler(action, handler); } catch (e) {}
       }
     }
   }, [currentTrack, status, playNext, playPrev, togglePlayPause]);
 
   const contextValue = useMemo(() => ({
-    currentTrack, status, playingUrl, duration, volume,
-    isFullScreen, seekRequest, queue, isShuffle, repeatMode,
-    sleepMode: sleepModeState, sleepSeconds, setSleepMode,
-    playbackError, setPlaybackError,
-    playTrack, playNext, playPrev, toggleShuffle, toggleRepeat, togglePlayPause, setVolume, seek,
-    onProgress: handleProgress,
-    onDuration: setDuration,
-    onEnded: handleEnded,
-    setIsFullScreen, clearSeekRequest,
-    isMusicLoaded
-  }), [
-    currentTrack, status, playingUrl, duration, volume,
-    isFullScreen, seekRequest, queue, isShuffle, repeatMode,
-    sleepModeState, sleepSeconds, playbackError,
-    playTrack, playNext, playPrev, setSleepMode, toggleShuffle, toggleRepeat, togglePlayPause, seek, handleProgress, handleEnded, clearSeekRequest,
-    isMusicLoaded
-  ]);
+    currentTrack, status, playingUrl, duration, volume, isFullScreen, seekRequest, queue, isShuffle, repeatMode,
+    sleepMode: sleepModeState, sleepSeconds, playbackError,
+    setPlaybackError, setSleepMode, playTrack, playNext, playPrev, toggleShuffle, toggleRepeat, togglePlayPause, setVolume, seek,
+    onProgress: handleProgress, onDuration: setDuration, onEnded: handleEnded, setIsFullScreen, clearSeekRequest, isMusicLoaded
+  }), [currentTrack, status, playingUrl, duration, volume, isFullScreen, seekRequest, queue, isShuffle, repeatMode, sleepModeState, sleepSeconds, playbackError, playTrack, playNext, playPrev, setSleepMode, toggleShuffle, toggleRepeat, togglePlayPause, seek, handleProgress, handleEnded, isMusicLoaded]);
 
-  return (
-    <MusicContext.Provider value={contextValue}>
-      {children}
-    </MusicContext.Provider>
-  );
+  return <MusicContext.Provider value={contextValue}>{children}</MusicContext.Provider>;
 }
 
 export const useMusic = () => {
