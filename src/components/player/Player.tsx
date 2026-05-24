@@ -17,10 +17,8 @@ export function Player() {
   const ytPlayerInstance = useRef<any>(null);
   const progressInterval = useRef<NodeJS.Timeout | null>(null);
   const ghostAudioRef = useRef<HTMLAudioElement>(null);
-  // ── Web Audio API ──
   const audioCtxRef = useRef<AudioContext | null>(null);
   const silenceNodeRef = useRef<ScriptProcessorNode | null>(null);
-
   const isReady = useRef(false);
   const pendingVideoId = useRef<string | null>(null);
   const isUnlocked = useRef(false);
@@ -40,21 +38,18 @@ export function Player() {
     if (isUnlocked.current) return;
     isUnlocked.current = true;
 
-    // 1. Web Audio API — oscillateur silencieux (maintient la session audio)
     try {
       const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
       audioCtxRef.current = ctx;
 
-      // ScriptProcessor avec buffer vide = silence parfait, session active
       const processor = ctx.createScriptProcessor(256, 1, 1);
-      processor.onaudioprocess = () => {}; // silence
+      processor.onaudioprocess = () => {};
       processor.connect(ctx.destination);
       silenceNodeRef.current = processor;
 
       if (ctx.state === "suspended") ctx.resume().catch(() => {});
     } catch (e) {}
 
-    // 2. Ghost audio HTML
     if (ghostAudioRef.current) {
       ghostAudioRef.current.play().catch(() => {});
     }
@@ -137,20 +132,15 @@ export function Player() {
   useEffect(() => {
     const handleVisibility = () => {
       if (document.visibilityState === "visible") {
-        // Réveille l'AudioContext si suspendu (iOS le suspend parfois)
         const ctx = audioCtxRef.current;
         if (ctx && ctx.state === "suspended") ctx.resume().catch(() => {});
 
-        // Réveille le ghost audio si arrêté
         if (ghostAudioRef.current && ghostAudioRef.current.paused) {
           ghostAudioRef.current.play().catch(() => {});
         }
 
-        // Si le YT player s'est mis en pause tout seul en arrière-plan,
-        // on le relance si le status applicatif est "playing"
         const player = ytPlayerInstance.current;
         if (player?.getPlayerState && player.getPlayerState() !== window.YT?.PlayerState?.PLAYING) {
-          // On relit via un court délai (iOS a besoin d'un tick)
           setTimeout(() => {
             if (player?.playVideo) player.playVideo();
           }, 300);
@@ -159,21 +149,15 @@ export function Player() {
     };
 
     document.addEventListener("visibilitychange", handleVisibility);
-    // pagehide : déclenché sur iOS quand on verrouille l'écran
-    window.addEventListener("pagehide", () => {
-      // Rien à faire, on laisse tourner
-    });
-
     return () => document.removeEventListener("visibilitychange", handleVisibility);
   }, []);
 
   // ─────────────────────────────────────────────────────────────
-  // iosUnlock event (déclenché depuis MusicContext au playTrack)
+  // iosUnlock event + premier tap/click
   // ─────────────────────────────────────────────────────────────
   useEffect(() => {
     const handle = () => unlockIOSAudio();
     window.addEventListener("iosUnlock", handle as EventListener);
-    // Aussi sur le premier tap/click global
     window.addEventListener("touchstart", handle, { once: true });
     window.addEventListener("pointerdown", handle, { once: true });
     return () => {
@@ -215,23 +199,27 @@ export function Player() {
     }
   }, [seekRequest, clearSeekRequest]);
 
+  // ─────────────────────────────────────────────────────────────
+  // Heartbeat iOS — pulse AudioContext + ghost audio toutes les 20s
+  // DOIT être avant le return conditionnel (règle des hooks React)
+  // ─────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const ctx = audioCtxRef.current;
+      if (ctx && ctx.state === "suspended") {
+        ctx.resume().catch(() => {});
+      }
+      if (ghostAudioRef.current && ghostAudioRef.current.paused) {
+        ghostAudioRef.current.play().catch(() => {});
+      }
+    }, 20_000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // ─────────────────────────────────────────────────────────────
+  // Tous les hooks sont au-dessus — return conditionnel ici
+  // ─────────────────────────────────────────────────────────────
   if (!isClient) return null;
-
-  // ── Heartbeat iOS : pulse l'AudioContext toutes les 20s ──
-useEffect(() => {
-  const interval = setInterval(() => {
-    const ctx = audioCtxRef.current;
-    if (ctx && ctx.state === "suspended") {
-      ctx.resume().catch(() => {});
-    }
-    // Force aussi le ghost audio si arrêté
-    if (ghostAudioRef.current && ghostAudioRef.current.paused) {
-      ghostAudioRef.current.play().catch(() => {});
-    }
-  }, 20_000);
-
-  return () => clearInterval(interval);
-}, []);
 
   return (
     <>
@@ -254,7 +242,7 @@ useEffect(() => {
         <div id="youtube-player-div" />
       </div>
 
-      {/* Ghost audio — vrai fichier MP3 silencieux en boucle */}
+      {/* Ghost audio — fichier MP3 silencieux en boucle */}
       <audio
         ref={ghostAudioRef}
         src="/silence.mp3"
