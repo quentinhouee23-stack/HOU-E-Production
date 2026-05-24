@@ -193,40 +193,50 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const loadAndPlayUrl = useCallback(async (track: Track) => {
-    setPlaybackError(null);
-    setStatus("loading");
-    setCurrentTrack(track);
-    currentTrackIdRef.current = track.id;
-    currentTimeRef.current = 0;
-    unlockAudio();
+  // Remplace UNIQUEMENT la fonction loadAndPlayUrl dans MusicContext.tsx
+// (garde tout le reste identique)
 
-    try {
-      let videoId = ytCacheRef.current[track.id];
-      if (!videoId || !isValidYTId(videoId)) {
-        const query = `${track.artist} ${track.title} audio -"full album" -"live"`;
-        const res = await fetch(`/api/youtube?q=${encodeURIComponent(query)}`);
-        if (!res.ok) throw new Error("Musique introuvable.");
-        
-        const data = await res.json();
-        if (data.videoId) {
-           videoId = data.videoId;
-           saveToCache(track.id, videoId);
-        } else {
-           throw new Error("ID introuvable.");
-        }
+const loadAndPlayUrl = useCallback(async (track: Track) => {
+  setPlaybackError(null);
+  setStatus("loading");
+  setCurrentTrack(track);
+  currentTrackIdRef.current = track.id;
+  currentTimeRef.current = 0;
+  unlockAudio();
+
+  try {
+    // 1. Récupère le videoId YouTube (logique existante inchangée)
+    let videoId = ytCacheRef.current[track.id];
+    if (!videoId || !isValidYTId(videoId)) {
+      const query = `${track.artist} ${track.title} audio -"full album" -"live"`;
+      const res = await fetch(`/api/youtube?q=${encodeURIComponent(query)}`);
+      if (!res.ok) throw new Error("Musique introuvable.");
+
+      const data = await res.json();
+      if (data.videoId) {
+        videoId = data.videoId;
+        saveToCache(track.id, videoId);
+      } else {
+        throw new Error("ID introuvable.");
       }
-
-      setPlayingUrl(videoId);
-      setStatus("playing");
-      prefetchNextLogic();
-
-    } catch (error) {
-      setPlaybackError(error.message);
-      setStatus("idle");
-      setTimeout(() => playNextRef.current(), 2000);
     }
-  }, [prefetchNextLogic, saveToCache, unlockAudio]);
+
+    // 2. NOUVEAU : récupère l'URL audio directe (compatible background iOS)
+    const streamRes = await fetch(`/api/stream?videoId=${videoId}`);
+    if (!streamRes.ok) throw new Error("Stream audio introuvable.");
+    const { url: streamUrl } = await streamRes.json();
+
+    // 3. playingUrl est maintenant une vraie URL audio, plus un videoId YouTube
+    setPlayingUrl(streamUrl);
+    setStatus("playing");
+    prefetchNextLogic();
+
+  } catch (error) {
+    setPlaybackError(error.message);
+    setStatus("idle");
+    setTimeout(() => playNextRef.current(), 2000);
+  }
+}, [prefetchNextLogic, saveToCache, unlockAudio]);
 
   const playTrack = useCallback(async (track: Track, newQueue?: Track[]) => {
     if (newQueue && newQueue.length > 0) {

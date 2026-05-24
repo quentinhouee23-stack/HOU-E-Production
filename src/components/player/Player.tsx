@@ -1,225 +1,150 @@
 // @ts-nocheck
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef } from "react";
 import { useMusic } from "@/context/MusicContext";
 
 export function Player() {
   const {
-    playingUrl: videoId, status, volume,
+    playingUrl, status, volume,
     onDuration, onProgress, onEnded,
     seekRequest, clearSeekRequest,
-    playbackError, setPlaybackError
+    playbackError, setPlaybackError,
   } = useMusic();
 
-  const [isClient, setIsClient] = useState(false);
-
-  const ytPlayerInstance = useRef<any>(null);
-  const progressInterval = useRef<NodeJS.Timeout | null>(null);
-  const ghostAudioRef = useRef<HTMLAudioElement>(null);
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const silenceNodeRef = useRef<ScriptProcessorNode | null>(null);
-  const isReady = useRef(false);
-  const pendingVideoId = useRef<string | null>(null);
-  const isUnlocked = useRef(false);
+  const audioRef = useRef<HTMLAudioElement>(null);
 
   const onEndedRef = useRef(onEnded);
   const onDurationRef = useRef(onDuration);
   const onProgressRef = useRef(onProgress);
+  const statusRef = useRef(status);
 
   useEffect(() => { onEndedRef.current = onEnded; }, [onEnded]);
   useEffect(() => { onDurationRef.current = onDuration; }, [onDuration]);
   useEffect(() => { onProgressRef.current = onProgress; }, [onProgress]);
+  useEffect(() => { statusRef.current = status; }, [status]);
 
   // ─────────────────────────────────────────────────────────────
-  // Unlock : démarre AudioContext + ghost audio au premier geste
-  // ─────────────────────────────────────────────────────────────
-  const unlockIOSAudio = () => {
-    if (isUnlocked.current) return;
-    isUnlocked.current = true;
-
-    try {
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      audioCtxRef.current = ctx;
-
-      const processor = ctx.createScriptProcessor(256, 1, 1);
-      processor.onaudioprocess = () => {};
-      processor.connect(ctx.destination);
-      silenceNodeRef.current = processor;
-
-      if (ctx.state === "suspended") ctx.resume().catch(() => {});
-    } catch (e) {}
-
-    if (ghostAudioRef.current) {
-      ghostAudioRef.current.play().catch(() => {});
-    }
-  };
-
-  // ─────────────────────────────────────────────────────────────
-  // Init YouTube IFrame API
+  // Attache les événements audio une seule fois
   // ─────────────────────────────────────────────────────────────
   useEffect(() => {
-    setIsClient(true);
+    const audio = audioRef.current;
+    if (!audio) return;
 
-    const initPlayer = () => {
-      if (!document.getElementById("youtube-player-div")) return;
-
-      ytPlayerInstance.current = new window.YT.Player("youtube-player-div", {
-        width: "1",
-        height: "1",
-        playerVars: {
-          autoplay: 1, controls: 0, disablekb: 1, fs: 0,
-          rel: 0, modestbranding: 1, playsinline: 1, enablejsapi: 1,
-          origin: typeof window !== "undefined" ? window.location.origin : "",
-        },
-        events: {
-          onReady: (event: any) => {
-            isReady.current = true;
-            event.target.setVolume(volume * 100);
-            const vidToLoad = pendingVideoId.current || videoId;
-            if (vidToLoad) {
-              if (status === "playing") event.target.loadVideoById(vidToLoad);
-              else event.target.cueVideoById(vidToLoad);
-              pendingVideoId.current = null;
-            }
-          },
-          onStateChange: (event: any) => {
-            const YT = window.YT.PlayerState;
-            if (event.data === YT.PLAYING) {
-              const dur = event.target.getDuration();
-              if (dur > 0) onDurationRef.current(dur);
-              event.target.unMute();
-              event.target.setVolume(volume * 100);
-
-              if (progressInterval.current) clearInterval(progressInterval.current);
-              progressInterval.current = setInterval(() => {
-                onProgressRef.current({ playedSeconds: event.target.getCurrentTime() });
-              }, 1000);
-            } else {
-              if (progressInterval.current) clearInterval(progressInterval.current);
-            }
-            if (event.data === YT.ENDED) onEndedRef.current();
-          },
-          onError: (event: any) => {
-            console.error("YouTube Player Error", event.data);
-            setPlaybackError("Vidéo bloquée par YouTube. Zapping...");
-            setTimeout(() => {
-              setPlaybackError(null);
-              onEndedRef.current();
-            }, 2000);
-          },
-        },
-      });
-    };
-
-    if (!window.YT) {
-      const script = document.createElement("script");
-      script.src = "https://www.youtube.com/iframe_api";
-      document.body.appendChild(script);
-      window.onYouTubeIframeAPIReady = initPlayer;
-    } else if (!ytPlayerInstance.current) {
-      initPlayer();
-    }
-
-    return () => {
-      if (progressInterval.current) clearInterval(progressInterval.current);
-    };
-  }, []);
-
-  // ─────────────────────────────────────────────────────────────
-  // visibilitychange — reprend le player quand l'app revient
-  // ─────────────────────────────────────────────────────────────
-  useEffect(() => {
-    const handleVisibility = () => {
-      if (document.visibilityState === "visible") {
-        const ctx = audioCtxRef.current;
-        if (ctx && ctx.state === "suspended") ctx.resume().catch(() => {});
-
-        if (ghostAudioRef.current && ghostAudioRef.current.paused) {
-          ghostAudioRef.current.play().catch(() => {});
-        }
-
-        const player = ytPlayerInstance.current;
-        if (player?.getPlayerState && player.getPlayerState() !== window.YT?.PlayerState?.PLAYING) {
-          setTimeout(() => {
-            if (player?.playVideo) player.playVideo();
-          }, 300);
-        }
+    const handleDuration = () => {
+      if (audio.duration && !isNaN(audio.duration)) {
+        onDurationRef.current(audio.duration);
       }
     };
 
-    document.addEventListener("visibilitychange", handleVisibility);
-    return () => document.removeEventListener("visibilitychange", handleVisibility);
-  }, []);
+    const handleTimeUpdate = () => {
+      onProgressRef.current({ playedSeconds: audio.currentTime });
+      // Met à jour MediaSession position (écran verrouillé)
+      if ("mediaSession" in navigator && navigator.mediaSession.setPositionState && audio.duration > 0) {
+        try {
+          navigator.mediaSession.setPositionState({
+            duration: audio.duration,
+            playbackRate: 1,
+            position: audio.currentTime,
+          });
+        } catch (e) {}
+      }
+    };
 
-  // ─────────────────────────────────────────────────────────────
-  // iosUnlock event + premier tap/click
-  // ─────────────────────────────────────────────────────────────
-  useEffect(() => {
-    const handle = () => unlockIOSAudio();
-    window.addEventListener("iosUnlock", handle as EventListener);
-    window.addEventListener("touchstart", handle, { once: true });
-    window.addEventListener("pointerdown", handle, { once: true });
+    const handleEnded = () => onEndedRef.current();
+
+    const handleError = () => {
+      console.error("Audio error", audio.error);
+      setPlaybackError("Erreur de lecture. Zapping...");
+      setTimeout(() => {
+        setPlaybackError(null);
+        onEndedRef.current();
+      }, 2000);
+    };
+
+    const handleCanPlay = () => {
+      if (statusRef.current === "playing") {
+        audio.play().catch(() => {});
+      }
+    };
+
+    audio.addEventListener("durationchange", handleDuration);
+    audio.addEventListener("timeupdate", handleTimeUpdate);
+    audio.addEventListener("ended", handleEnded);
+    audio.addEventListener("error", handleError);
+    audio.addEventListener("canplay", handleCanPlay);
+
     return () => {
-      window.removeEventListener("iosUnlock", handle as EventListener);
+      audio.removeEventListener("durationchange", handleDuration);
+      audio.removeEventListener("timeupdate", handleTimeUpdate);
+      audio.removeEventListener("ended", handleEnded);
+      audio.removeEventListener("error", handleError);
+      audio.removeEventListener("canplay", handleCanPlay);
     };
   }, []);
 
   // ─────────────────────────────────────────────────────────────
-  // Charge/joue la vidéo quand videoId ou status change
+  // Nouvelle URL audio → charge et joue
   // ─────────────────────────────────────────────────────────────
   useEffect(() => {
-    const player = ytPlayerInstance.current;
-    if (!videoId || !player?.loadVideoById || !isReady.current) {
-      if (videoId) pendingVideoId.current = videoId;
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    if (!playingUrl) {
+      audio.pause();
+      audio.src = "";
       return;
     }
-    if (status === "playing") player.loadVideoById(videoId);
-    else player.cueVideoById(videoId);
-  }, [videoId, status]);
 
+    audio.src = playingUrl;
+    audio.load();
+
+    if (status === "playing") {
+      // Petit délai : iOS a besoin d'un tick après load()
+      const t = setTimeout(() => {
+        audio.play().catch((e) => {
+          console.error("Play error:", e);
+          setPlaybackError("Lecture impossible. Zapping...");
+          setTimeout(() => {
+            setPlaybackError(null);
+            onEndedRef.current();
+          }, 2000);
+        });
+      }, 100);
+      return () => clearTimeout(t);
+    }
+  }, [playingUrl]);
+
+  // ─────────────────────────────────────────────────────────────
+  // Play / Pause
+  // ─────────────────────────────────────────────────────────────
   useEffect(() => {
-    const player = ytPlayerInstance.current;
-    if (player?.playVideo) {
-      if (status === "playing") player.playVideo();
-      else if (status === "paused" || status === "idle") player.pauseVideo();
+    const audio = audioRef.current;
+    if (!audio || !playingUrl) return;
+
+    if (status === "playing") {
+      audio.play().catch(() => {});
+    } else {
+      audio.pause();
     }
   }, [status]);
 
+  // ─────────────────────────────────────────────────────────────
+  // Volume
+  // ─────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (ytPlayerInstance.current?.setVolume) {
-      ytPlayerInstance.current.setVolume(volume * 100);
-    }
+    if (audioRef.current) audioRef.current.volume = volume;
   }, [volume]);
 
+  // ─────────────────────────────────────────────────────────────
+  // Seek
+  // ─────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (seekRequest !== null && ytPlayerInstance.current?.seekTo) {
-      ytPlayerInstance.current.seekTo(seekRequest, true);
+    if (seekRequest !== null && audioRef.current) {
+      audioRef.current.currentTime = seekRequest;
       clearSeekRequest();
     }
   }, [seekRequest, clearSeekRequest]);
-
-  // ─────────────────────────────────────────────────────────────
-  // Heartbeat iOS — pulse AudioContext + ghost audio toutes les 20s
-  // DOIT être avant le return conditionnel (règle des hooks React)
-  // ─────────────────────────────────────────────────────────────
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const ctx = audioCtxRef.current;
-      if (ctx && ctx.state === "suspended") {
-        ctx.resume().catch(() => {});
-      }
-      if (ghostAudioRef.current && ghostAudioRef.current.paused) {
-        ghostAudioRef.current.play().catch(() => {});
-      }
-    }, 20_000);
-    return () => clearInterval(interval);
-  }, []);
-
-  // ─────────────────────────────────────────────────────────────
-  // Tous les hooks sont au-dessus — return conditionnel ici
-  // ─────────────────────────────────────────────────────────────
-  if (!isClient) return null;
 
   return (
     <>
@@ -228,26 +153,20 @@ export function Player() {
           position: "fixed", top: 0, left: 0, right: 0, zIndex: 99999,
           backgroundColor: "#ff0000", color: "#fff", padding: "15px",
           fontFamily: "monospace", fontSize: "14px", textAlign: "center",
+          boxShadow: "0px 4px 10px rgba(0,0,0,0.5)",
         }}>
           <strong>🚨 {playbackError}</strong>
         </div>
       )}
 
-      {/* Conteneur iframe YouTube invisible */}
-      <div style={{
-        position: "fixed", top: 0, left: 0,
-        width: "1px", height: "1px",
-        opacity: 0.01, pointerEvents: "none", zIndex: -1,
-      }}>
-        <div id="youtube-player-div" />
-      </div>
-
-      {/* Ghost audio — fichier MP3 silencieux en boucle */}
+      {/*
+        L'élément audio natif — iOS le laisse jouer en arrière-plan
+        et écran verrouillé, contrairement à l'iframe YouTube.
+      */}
       <audio
-        ref={ghostAudioRef}
-        src="/silence.mp3"
-        loop
+        ref={audioRef}
         playsInline
+        preload="metadata"
         style={{ display: "none" }}
       />
     </>
