@@ -340,12 +340,17 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
         artwork: [{ src: currentTrack.image || 'https://api.dicebear.com/9.x/shapes/png?seed=music', sizes: '512x512', type: 'image/png' }]
       });
       navigator.mediaSession.playbackState = status === "playing" ? "playing" : "paused";
-      const actionHandlers = [
-        ['play', togglePlayPause], ['pause', () => setStatus("paused")],
-        ['previoustrack', playPrev], ['nexttrack', playNext],
+      const actionHandlers: [string, () => void][] = [
+        ["play",           togglePlayPause],
+        ["pause",          () => setStatus("paused")],
+        ["previoustrack",  playPrev],
+        ["nexttrack",      playNext],
+        // ← Nouveau : boutons +/- 10s sur l'écran verrouillé iOS
+        ["seekbackward",   () => seek(Math.max(0, currentTimeRef.current - 10))],
+        ["seekforward",    () => seek(currentTimeRef.current + 10)],
       ];
       for (const [action, handler] of actionHandlers) {
-        try { navigator.mediaSession.setActionHandler(action, handler); } catch (e) {}
+        try { navigator.mediaSession.setActionHandler(action as MediaSessionAction, handler); } catch (e) {}
       }
     }
   }, [currentTrack, status, playNext, playPrev, togglePlayPause]);
