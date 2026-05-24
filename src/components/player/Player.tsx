@@ -11,7 +11,10 @@ export function Player() {
   const playerContainerRef = useRef(null);
   const ytPlayerInstance = useRef(null);
   const progressInterval = useRef<NodeJS.Timeout | null>(null);
-  const ghostAudioRef = useRef<HTMLAudioElement>(null);
+  
+  // 🟢 LA RUSE DE L'ARRIÈRE-PLAN
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const silentOscillatorRef = useRef<OscillatorNode | null>(null);
   
   const isReady = useRef(false);
   const pendingVideoId = useRef<string | null>(null);
@@ -23,6 +26,42 @@ export function Player() {
   useEffect(() => { onEndedRef.current = onEnded; }, [onEnded]);
   useEffect(() => { onDurationRef.current = onDuration; }, [onDuration]);
   useEffect(() => { onProgressRef.current = onProgress; }, [onProgress]);
+
+  // 1. Initialisation de l'AudioContext (Le moteur de maintien en éveil)
+  const initAudioContext = () => {
+    if (!audioContextRef.current) {
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      audioContextRef.current = new AudioContext();
+    }
+    
+    // Si l'audio est suspendu (sécurité iOS), on le réveille
+    if (audioContextRef.current.state === "suspended") {
+      audioContextRef.current.resume();
+    }
+
+    // On crée un son totalement silencieux mais qui "occupe" le canal audio
+    if (!silentOscillatorRef.current) {
+      const osc = audioContextRef.current.createOscillator();
+      const gainNode = audioContextRef.current.createGain();
+      gainNode.gain.value = 0; // Volume à ZÉRO absolu
+      
+      osc.connect(gainNode);
+      gainNode.connect(audioContextRef.current.destination);
+      osc.start();
+      silentOscillatorRef.current = osc;
+    }
+  };
+
+  const stopAudioContext = () => {
+    if (silentOscillatorRef.current) {
+      silentOscillatorRef.current.stop();
+      silentOscillatorRef.current.disconnect();
+      silentOscillatorRef.current = null;
+    }
+    if (audioContextRef.current && audioContextRef.current.state !== "closed") {
+      audioContextRef.current.suspend();
+    }
+  };
 
   useEffect(() => {
     setIsClient(true);
@@ -38,7 +77,7 @@ export function Player() {
           fs: 0, 
           rel: 0, 
           modestbranding: 1,
-          playsinline: 1, // Autorise la lecture sans passer en plein écran natif sur iOS
+          playsinline: 1, // Crucial pour empêcher le plein écran natif d'iOS
           enablejsapi: 1,
           origin: typeof window !== "undefined" ? window.location.origin : "http://localhost:3000"
         },
@@ -59,6 +98,9 @@ export function Player() {
           },
           onStateChange: (event) => {
             if (event.data === window.YT.PlayerState.PLAYING) {
+              // La vidéo tourne -> On active le moteur silencieux pour l'arrière-plan
+              initAudioContext();
+              
               const dur = event.target.getDuration();
               if (dur > 0) onDurationRef.current(dur);
 
@@ -71,7 +113,11 @@ export function Player() {
                 onProgressRef.current({ playedSeconds: currentTime }); 
               }, 1000);
             } else {
+              // Vidéo en pause ou terminée -> On arrête le moteur silencieux
               if (progressInterval.current) clearInterval(progressInterval.current);
+              if (event.data === window.YT.PlayerState.PAUSED || event.data === window.YT.PlayerState.ENDED) {
+                 stopAudioContext();
+              }
             }
             
             if (event.data === window.YT.PlayerState.ENDED) {
@@ -80,6 +126,7 @@ export function Player() {
           },
           onError: (event) => {
             console.error("YouTube Player Error", event.data);
+            stopAudioContext();
             setPlaybackError("La vidéo a été bloquée par YouTube (droits d'auteur). Zapping...");
             setTimeout(() => {
               setPlaybackError(null);
@@ -101,19 +148,18 @@ export function Player() {
 
     return () => {
       if (progressInterval.current) clearInterval(progressInterval.current);
+      stopAudioContext();
     };
   }, []);
 
-  // 🟢 L'ASTUCE SONGSTERR : Force l'Audio fantôme pour maintenir la session lockscreen iOS
+  // Écoute de l'événement de déverrouillage natif pour réveiller le moteur
   useEffect(() => {
     const handleIOSUnlock = () => {
-      if (ghostAudioRef.current && ghostAudioRef.current.paused) {
-        ghostAudioRef.current.play().catch(() => {});
-      }
+      if (status === "playing") initAudioContext();
     };
     window.addEventListener("iosUnlock", handleIOSUnlock as EventListener);
     return () => window.removeEventListener("iosUnlock", handleIOSUnlock as EventListener);
-  }, []);
+  }, [status]);
 
   useEffect(() => {
     const player = ytPlayerInstance.current;
@@ -124,6 +170,7 @@ export function Player() {
     
     if (status === "playing") {
       player.loadVideoById(videoId);
+      initAudioContext();
     } else {
       player.cueVideoById(videoId);
     }
@@ -133,8 +180,10 @@ export function Player() {
     if (ytPlayerInstance.current && ytPlayerInstance.current.playVideo) {
       if (status === "playing") {
         ytPlayerInstance.current.playVideo();
+        initAudioContext();
       } else if (status === "paused" || status === "idle") {
         ytPlayerInstance.current.pauseVideo();
+        stopAudioContext();
       }
     }
   }, [status]);
@@ -167,8 +216,7 @@ export function Player() {
         </div>
       )}
 
-      {/* 🟢 LA RUSE : L'iframe n'est PAS en display: none ! */}
-      {/* Elle fait 1x1 pixel et est transparente. L'iPhone pense que c'est une vidéo légitime ! */}
+      {/* L'iframe transparente qui joue la vraie musique */}
       <div style={{
         position: "fixed",
         top: "0",
@@ -182,14 +230,8 @@ export function Player() {
         <div ref={playerContainerRef} />
       </div>
 
-      {/* Leurre Audio pour l'écran de verrouillage */}
-      <audio
-        ref={ghostAudioRef}
-        id="ghost-audio"
-        src="data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA"
-        loop
-        playsInline
-      />
+      {/* J'ai supprimé la balise <audio> fantôme qui ne marchait pas,
+          tout passe maintenant par le moteur AudioContext en JavaScript pur */}
     </>
   );
 }
