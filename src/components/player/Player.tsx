@@ -217,6 +217,22 @@ export function Player() {
 
   if (!isClient) return null;
 
+  // ── Heartbeat iOS : pulse l'AudioContext toutes les 20s ──
+useEffect(() => {
+  const interval = setInterval(() => {
+    const ctx = audioCtxRef.current;
+    if (ctx && ctx.state === "suspended") {
+      ctx.resume().catch(() => {});
+    }
+    // Force aussi le ghost audio si arrêté
+    if (ghostAudioRef.current && ghostAudioRef.current.paused) {
+      ghostAudioRef.current.play().catch(() => {});
+    }
+  }, 20_000);
+
+  return () => clearInterval(interval);
+}, []);
+
   return (
     <>
       {playbackError && (
