@@ -6,7 +6,6 @@ export const runtime = "nodejs";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-// Client Supabase léger, il n'y aura plus d'erreur si la table n'existe pas
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 function fetchWithTimeout(url: string, ms: number, options: RequestInit = {}) {
@@ -21,7 +20,6 @@ export async function GET(req: Request) {
     const q = searchParams.get("q");
     const videoIdParam = searchParams.get("videoId");
 
-    // 🟢 ANTI-PLANTAGE 400 : Si le frontend nous envoie déjà l'ID, on valide direct !
     if (videoIdParam) {
       return NextResponse.json({ videoId: videoIdParam });
     }
