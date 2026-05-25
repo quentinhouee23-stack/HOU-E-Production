@@ -17,13 +17,13 @@ export function Player() {
   const ytPlayerInstance = useRef<any>(null);
   const progressInterval = useRef<NodeJS.Timeout | null>(null);
   const ghostAudioRef = useRef<HTMLAudioElement>(null);
+  
   // ── Web Audio API ──
   const audioCtxRef = useRef<AudioContext | null>(null);
   const silenceNodeRef = useRef<ScriptProcessorNode | null>(null);
 
   const isReady = useRef(false);
   const pendingVideoId = useRef<string | null>(null);
-  const isUnlocked = useRef(false);
 
   const onEndedRef = useRef(onEnded);
   const onDurationRef = useRef(onDuration);
@@ -34,28 +34,26 @@ export function Player() {
   useEffect(() => { onProgressRef.current = onProgress; }, [onProgress]);
 
   // ─────────────────────────────────────────────────────────────
-  // Unlock : démarre AudioContext + ghost audio au premier geste
+  // Unlock : Maintient l'application éveillée en arrière-plan
   // ─────────────────────────────────────────────────────────────
   const unlockIOSAudio = () => {
-    if (isUnlocked.current) return;
-    isUnlocked.current = true;
-
-    // 1. Web Audio API — oscillateur silencieux (maintient la session audio)
     try {
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      audioCtxRef.current = ctx;
+      if (!audioCtxRef.current) {
+        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        audioCtxRef.current = ctx;
 
-      // ScriptProcessor avec buffer vide = silence parfait, session active
-      const processor = ctx.createScriptProcessor(256, 1, 1);
-      processor.onaudioprocess = () => {}; // silence
-      processor.connect(ctx.destination);
-      silenceNodeRef.current = processor;
-
-      if (ctx.state === "suspended") ctx.resume().catch(() => {});
+        // ScriptProcessor avec buffer vide = silence parfait, session active
+        const processor = ctx.createScriptProcessor(256, 1, 1);
+        processor.onaudioprocess = () => {}; 
+        processor.connect(ctx.destination);
+        silenceNodeRef.current = processor;
+      }
+      if (audioCtxRef.current.state === "suspended") {
+        audioCtxRef.current.resume().catch(() => {});
+      }
     } catch (e) {}
 
-    // 2. Ghost audio HTML
-    if (ghostAudioRef.current) {
+    if (ghostAudioRef.current && ghostAudioRef.current.paused) {
       ghostAudioRef.current.play().catch(() => {});
     }
   };
@@ -90,7 +88,9 @@ export function Player() {
           },
           onStateChange: (event: any) => {
             const YT = window.YT.PlayerState;
+            
             if (event.data === YT.PLAYING) {
+              unlockIOSAudio(); // On sécurise l'éveil à chaque fois que ça joue
               const dur = event.target.getDuration();
               if (dur > 0) onDurationRef.current(dur);
               event.target.unMute();
@@ -103,6 +103,16 @@ export function Player() {
             } else {
               if (progressInterval.current) clearInterval(progressInterval.current);
             }
+
+            // 🟢 LE HACK ABSOLU ANTI-PAUSE
+            if (event.data === YT.PAUSED) {
+              // Si YouTube se met en pause TOUT SEUL parce qu'on a quitté/verrouillé l'app (hidden)
+              // On le force à se rallumer instantanément !
+              if (document.hidden || document.visibilityState === "hidden") {
+                event.target.playVideo();
+              }
+            }
+
             if (event.data === YT.ENDED) onEndedRef.current();
           },
           onError: (event: any) => {
@@ -136,21 +146,16 @@ export function Player() {
   // ─────────────────────────────────────────────────────────────
   useEffect(() => {
     const handleVisibility = () => {
+      // Sécurité : si on met l'app en arrière plan, on insiste pour jouer
+      if (document.visibilityState === "hidden" && status === "playing") {
+         const player = ytPlayerInstance.current;
+         if (player?.playVideo) player.playVideo();
+      }
+
       if (document.visibilityState === "visible") {
-        // Réveille l'AudioContext si suspendu (iOS le suspend parfois)
-        const ctx = audioCtxRef.current;
-        if (ctx && ctx.state === "suspended") ctx.resume().catch(() => {});
-
-        // Réveille le ghost audio si arrêté
-        if (ghostAudioRef.current && ghostAudioRef.current.paused) {
-          ghostAudioRef.current.play().catch(() => {});
-        }
-
-        // Si le YT player s'est mis en pause tout seul en arrière-plan,
-        // on le relance si le status applicatif est "playing"
+        unlockIOSAudio();
         const player = ytPlayerInstance.current;
-        if (player?.getPlayerState && player.getPlayerState() !== window.YT?.PlayerState?.PLAYING) {
-          // On relit via un court délai (iOS a besoin d'un tick)
+        if (status === "playing" && player?.getPlayerState && player.getPlayerState() !== window.YT?.PlayerState?.PLAYING) {
           setTimeout(() => {
             if (player?.playVideo) player.playVideo();
           }, 300);
@@ -159,21 +164,15 @@ export function Player() {
     };
 
     document.addEventListener("visibilitychange", handleVisibility);
-    // pagehide : déclenché sur iOS quand on verrouille l'écran
-    window.addEventListener("pagehide", () => {
-      // Rien à faire, on laisse tourner
-    });
-
     return () => document.removeEventListener("visibilitychange", handleVisibility);
-  }, []);
+  }, [status]);
 
   // ─────────────────────────────────────────────────────────────
-  // iosUnlock event (déclenché depuis MusicContext au playTrack)
+  // iosUnlock event 
   // ─────────────────────────────────────────────────────────────
   useEffect(() => {
     const handle = () => unlockIOSAudio();
     window.addEventListener("iosUnlock", handle as EventListener);
-    // Aussi sur le premier tap/click global
     window.addEventListener("touchstart", handle, { once: true });
     window.addEventListener("pointerdown", handle, { once: true });
     return () => {
@@ -197,7 +196,10 @@ export function Player() {
   useEffect(() => {
     const player = ytPlayerInstance.current;
     if (player?.playVideo) {
-      if (status === "playing") player.playVideo();
+      if (status === "playing") {
+        player.playVideo();
+        unlockIOSAudio();
+      }
       else if (status === "paused" || status === "idle") player.pauseVideo();
     }
   }, [status]);
@@ -238,10 +240,10 @@ export function Player() {
         <div id="youtube-player-div" />
       </div>
 
-      {/* Ghost audio — vrai fichier MP3 silencieux en boucle */}
+      {/* Ghost audio en Base64 pur : garanti 0 erreur 404 Vercel */}
       <audio
         ref={ghostAudioRef}
-        src="/silence.mp3"
+        src="data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA"
         loop
         playsInline
         style={{ display: "none" }}
