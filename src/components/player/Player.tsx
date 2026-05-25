@@ -17,13 +17,10 @@ export function Player() {
   const ytPlayerInstance = useRef<any>(null);
   const progressInterval = useRef<NodeJS.Timeout | null>(null);
   const ghostAudioRef = useRef<HTMLAudioElement>(null);
-  
-  // ── Web Audio API ──
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const silenceNodeRef = useRef<ScriptProcessorNode | null>(null);
 
   const isReady = useRef(false);
   const pendingVideoId = useRef<string | null>(null);
+  const isUnlocked = useRef(false);
 
   const onEndedRef = useRef(onEnded);
   const onDurationRef = useRef(onDuration);
@@ -34,27 +31,19 @@ export function Player() {
   useEffect(() => { onProgressRef.current = onProgress; }, [onProgress]);
 
   // ─────────────────────────────────────────────────────────────
-  // Unlock : Maintient l'application éveillée en arrière-plan
+  // Unlock : Lance le silence.mp3 au premier clic de l'utilisateur
   // ─────────────────────────────────────────────────────────────
   const unlockIOSAudio = () => {
-    try {
-      if (!audioCtxRef.current) {
-        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-        audioCtxRef.current = ctx;
+    if (isUnlocked.current) return;
+    isUnlocked.current = true;
 
-        // ScriptProcessor avec buffer vide = silence parfait, session active
-        const processor = ctx.createScriptProcessor(256, 1, 1);
-        processor.onaudioprocess = () => {}; 
-        processor.connect(ctx.destination);
-        silenceNodeRef.current = processor;
-      }
-      if (audioCtxRef.current.state === "suspended") {
-        audioCtxRef.current.resume().catch(() => {});
-      }
-    } catch (e) {}
-
-    if (ghostAudioRef.current && ghostAudioRef.current.paused) {
-      ghostAudioRef.current.play().catch(() => {});
+    // On lance le fichier MP3 silencieux. 
+    // Il va tourner en boucle infinie et forcer iOS à garder le canal audio ouvert.
+    if (ghostAudioRef.current) {
+      ghostAudioRef.current.volume = 1;
+      ghostAudioRef.current.play().catch(() => {
+        isUnlocked.current = false; // Si ça rate, on réessaiera au prochain clic
+      });
     }
   };
 
@@ -68,8 +57,8 @@ export function Player() {
       if (!document.getElementById("youtube-player-div")) return;
 
       ytPlayerInstance.current = new window.YT.Player("youtube-player-div", {
-        width: "1",
-        height: "1",
+        width: "10", // Pas 1x1, parfois iOS bloque les iframes trop petites
+        height: "10",
         playerVars: {
           autoplay: 1, controls: 0, disablekb: 1, fs: 0,
           rel: 0, modestbranding: 1, playsinline: 1, enablejsapi: 1,
@@ -90,7 +79,11 @@ export function Player() {
             const YT = window.YT.PlayerState;
             
             if (event.data === YT.PLAYING) {
-              unlockIOSAudio(); // On sécurise l'éveil à chaque fois que ça joue
+              // Sécurité : On s'assure que le silence tourne toujours quand la musique joue
+              if (ghostAudioRef.current && ghostAudioRef.current.paused) {
+                 ghostAudioRef.current.play().catch(() => {});
+              }
+
               const dur = event.target.getDuration();
               if (dur > 0) onDurationRef.current(dur);
               event.target.unMute();
@@ -103,16 +96,7 @@ export function Player() {
             } else {
               if (progressInterval.current) clearInterval(progressInterval.current);
             }
-
-            // 🟢 LE HACK ABSOLU ANTI-PAUSE
-            if (event.data === YT.PAUSED) {
-              // Si YouTube se met en pause TOUT SEUL parce qu'on a quitté/verrouillé l'app (hidden)
-              // On le force à se rallumer instantanément !
-              if (document.hidden || document.visibilityState === "hidden") {
-                event.target.playVideo();
-              }
-            }
-
+            
             if (event.data === YT.ENDED) onEndedRef.current();
           },
           onError: (event: any) => {
@@ -142,18 +126,25 @@ export function Player() {
   }, []);
 
   // ─────────────────────────────────────────────────────────────
-  // visibilitychange — reprend le player quand l'app revient
+  // visibilitychange — Le contre-braquage contre iOS
   // ─────────────────────────────────────────────────────────────
   useEffect(() => {
     const handleVisibility = () => {
-      // Sécurité : si on met l'app en arrière plan, on insiste pour jouer
-      if (document.visibilityState === "hidden" && status === "playing") {
-         const player = ytPlayerInstance.current;
-         if (player?.playVideo) player.playVideo();
+      // 1. Quand l'application passe en arrière-plan (écran verrouillé ou changement d'app)
+      if (document.visibilityState === "hidden") {
+        // YouTube force souvent la pause ici. On le force à reprendre la lecture après 100ms
+        if (status === "playing" && ytPlayerInstance.current?.playVideo) {
+          setTimeout(() => {
+             ytPlayerInstance.current.playVideo();
+          }, 100);
+        }
       }
 
+      // 2. Quand on revient sur l'application
       if (document.visibilityState === "visible") {
-        unlockIOSAudio();
+        if (ghostAudioRef.current && ghostAudioRef.current.paused) {
+          ghostAudioRef.current.play().catch(() => {});
+        }
         const player = ytPlayerInstance.current;
         if (status === "playing" && player?.getPlayerState && player.getPlayerState() !== window.YT?.PlayerState?.PLAYING) {
           setTimeout(() => {
@@ -168,15 +159,20 @@ export function Player() {
   }, [status]);
 
   // ─────────────────────────────────────────────────────────────
-  // iosUnlock event 
+  // Initialisation globale de l'audio fantôme
   // ─────────────────────────────────────────────────────────────
   useEffect(() => {
     const handle = () => unlockIOSAudio();
+    // Le Custom Event envoyé par ton bouton Play
     window.addEventListener("iosUnlock", handle as EventListener);
-    window.addEventListener("touchstart", handle, { once: true });
-    window.addEventListener("pointerdown", handle, { once: true });
+    // On ratisse large : n'importe quel clic sur l'écran débloquera le silence.mp3
+    document.addEventListener("touchstart", handle, { once: true });
+    document.addEventListener("click", handle, { once: true });
+    
     return () => {
       window.removeEventListener("iosUnlock", handle as EventListener);
+      document.removeEventListener("touchstart", handle);
+      document.removeEventListener("click", handle);
     };
   }, []);
 
@@ -196,10 +192,7 @@ export function Player() {
   useEffect(() => {
     const player = ytPlayerInstance.current;
     if (player?.playVideo) {
-      if (status === "playing") {
-        player.playVideo();
-        unlockIOSAudio();
-      }
+      if (status === "playing") player.playVideo();
       else if (status === "paused" || status === "idle") player.pauseVideo();
     }
   }, [status]);
@@ -231,22 +224,34 @@ export function Player() {
         </div>
       )}
 
-      {/* Conteneur iframe YouTube invisible */}
+      {/* Conteneur iframe YouTube invisible 
+        IMPORTANT : On utilise des pixels réels (10x10) et non 1x1.
+      */}
       <div style={{
         position: "fixed", top: 0, left: 0,
-        width: "1px", height: "1px",
+        width: "10px", height: "10px",
         opacity: 0.01, pointerEvents: "none", zIndex: -1,
       }}>
         <div id="youtube-player-div" />
       </div>
 
-      {/* Ghost audio en Base64 pur : garanti 0 erreur 404 Vercel */}
+      {/* Ghost audio — Ton fichier MP3 silencieux en boucle.
+        IL NE FAUT SURTOUT PAS METTRE `display: "none"` SINON APPLE LE TUE.
+        On le cache avec CSS pour le rendre imperceptible.
+      */}
       <audio
         ref={ghostAudioRef}
-        src="data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA"
+        src="/silence.mp3"
         loop
         playsInline
-        style={{ display: "none" }}
+        style={{
+          position: "absolute",
+          width: "1px",
+          height: "1px",
+          opacity: 0.01,
+          pointerEvents: "none",
+          zIndex: -10
+        }}
       />
     </>
   );
