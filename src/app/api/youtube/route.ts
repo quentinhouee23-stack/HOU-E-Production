@@ -1,12 +1,7 @@
 // @ts-nocheck
 import { NextResponse } from "next/server";
-import { createClient } from '@supabase/supabase-js';
 
 export const runtime = "nodejs";
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-const supabase = createClient(supabaseUrl, supabaseKey);
 
 function fetchWithTimeout(url: string, ms: number, options: RequestInit = {}) {
   const controller = new AbortController();
@@ -18,11 +13,6 @@ export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const q = searchParams.get("q");
-    const videoIdParam = searchParams.get("videoId");
-
-    if (videoIdParam) {
-      return NextResponse.json({ videoId: videoIdParam });
-    }
 
     if (!q) return NextResponse.json({ error: "Recherche vide" }, { status: 400 });
 
@@ -53,18 +43,6 @@ export async function GET(req: Request) {
             const videoId = data.items[0].url.split("?v=")[1];
             if (videoId) return NextResponse.json({ videoId });
           }
-        }
-      } catch (e) {}
-    }
-
-    // 3. API Google en dernier recours
-    const apiKey = process.env.YOUTUBE_API_KEY;
-    if (apiKey) {
-      try {
-        const res = await fetchWithTimeout(`https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=1&q=${encodeURIComponent(q)}&key=${apiKey}`, 3000);
-        const data = await res.json();
-        if (data.items && data.items.length > 0) {
-           return NextResponse.json({ videoId: data.items[0].id.videoId });
         }
       } catch (e) {}
     }
