@@ -13,6 +13,9 @@ export function Player() {
   const isReady = useRef(false);
   const pendingVideoId = useRef<string | null>(null);
 
+  // Le bouclier pour empêcher iOS de suspendre l'application
+  const ghostAudioRef = useRef<HTMLAudioElement>(null);
+
   const onEndedRef = useRef(onEnded);
   const onDurationRef = useRef(onDuration);
   const onProgressRef = useRef(onProgress);
@@ -20,6 +23,21 @@ export function Player() {
   useEffect(() => { onEndedRef.current = onEnded; }, [onEnded]);
   useEffect(() => { onDurationRef.current = onDuration; }, [onDuration]);
   useEffect(() => { onProgressRef.current = onProgress; }, [onProgress]);
+
+  // 1. Activation du bouclier au premier tap sur l'écran
+  useEffect(() => {
+    const unlockAudio = () => {
+      if (ghostAudioRef.current && ghostAudioRef.current.paused) {
+        ghostAudioRef.current.play().catch(() => {});
+      }
+    };
+    document.addEventListener("touchstart", unlockAudio, { once: true });
+    document.addEventListener("click", unlockAudio, { once: true });
+    return () => {
+      document.removeEventListener("touchstart", unlockAudio);
+      document.removeEventListener("click", unlockAudio);
+    };
+  }, []);
 
   useEffect(() => {
     setIsClient(true);
@@ -55,6 +73,11 @@ export function Player() {
           },
           onStateChange: (event: any) => {
             if (event.data === window.YT.PlayerState.PLAYING) {
+              // On s'assure que le bouclier silencieux tourne bien
+              if (ghostAudioRef.current && ghostAudioRef.current.paused) {
+                 ghostAudioRef.current.play().catch(() => {});
+              }
+
               const dur = event.target.getDuration();
               if (dur > 0) onDurationRef.current(dur);
 
@@ -67,6 +90,15 @@ export function Player() {
               }, 1000);
             } else {
               if (progressInterval.current) clearInterval(progressInterval.current);
+            }
+
+            // 🚨 LE CONTRE-BRAQUAGE ANTI-PAUSE
+            if (event.data === window.YT.PlayerState.PAUSED) {
+               if (document.hidden || document.visibilityState === "hidden") {
+                  // YouTube vient de se mettre en pause parce qu'on a verrouillé l'écran.
+                  // On le relance immédiatement !
+                  event.target.playVideo();
+               }
             }
             
             if (event.data === window.YT.PlayerState.ENDED) {
@@ -98,6 +130,21 @@ export function Player() {
       if (progressInterval.current) clearInterval(progressInterval.current);
     };
   }, []);
+
+  // 2. Le deuxième filet de sécurité pour le verrouillage
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.hidden && status === "playing") {
+         const player = ytPlayerInstance.current;
+         if (player && player.playVideo) {
+            // Si on verrouille, on s'assure que le lecteur reçoit l'ordre de jouer
+            setTimeout(() => player.playVideo(), 150);
+         }
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [status]);
 
   // Charge/joue la vidéo quand videoId ou status change
   useEffect(() => {
@@ -162,6 +209,23 @@ export function Player() {
       }}>
         <div id="youtube-player-div" />
       </div>
+
+      {/* Piste fantôme pour tromper iOS. 
+          SURTOUT PAS DE display: none, sinon iOS la bloque. */}
+      <audio
+        ref={ghostAudioRef}
+        src="data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA"
+        loop
+        playsInline
+        style={{
+          position: "absolute",
+          width: "1px",
+          height: "1px",
+          opacity: 0.01,
+          pointerEvents: "none",
+          bottom: 0
+        }}
+      />
     </>
   );
 }

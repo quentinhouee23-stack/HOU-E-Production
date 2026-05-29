@@ -27,18 +27,7 @@ export function Header() {
   // Coupe l'overlay dès que la page a changé
   useEffect(() => { setIsNavigating(false); }, [pathname]);
 
-  useEffect(() => {
-    const fetchTokens = async () => {
-      try {
-        const today = new Date().toISOString().split('T')[0];
-        const { data } = await supabase.from('api_usage').select('tokens').eq('date', today).single();
-        if (data) setTokensUsed(data.tokens);
-      } catch (e) { console.error(e); }
-    };
-    fetchTokens();
-    const interval = setInterval(fetchTokens, 60000);
-    return () => clearInterval(interval);
-  }, []);
+ 
 
   const tokenPercentage = Math.min((tokensUsed / 10000) * 100, 100);
   const getProgressColor = () => {
