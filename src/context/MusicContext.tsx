@@ -9,7 +9,7 @@ export type SleepMode = "15" | "30" | "45" | "60" | "playlistEnd" | null;
 interface MusicContextValue {
   currentTrack: Track | null;
   status: PlayerStatus;
-  playingUrl: string | null; // Va stocker l'ID de la vidéo
+  playingUrl: string | null;
   duration: number;
   volume: number;
   isFullScreen: boolean;
@@ -65,6 +65,10 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   const currentTimeRef = useRef(0);
   const ytCacheRef = useRef<Record<string, string>>({});
   
+  // 🟢 LES VARIABLES QUI MANQUAIENT ET FAISAIENT CRASHER L'APP :
+  const repeatModeRef = useRef<"off" | "all" | "one">("off");
+  const isShuffleRef = useRef(false);
+
   const playNextRef = useRef<() => void>(() => {});
 
   useEffect(() => {
@@ -132,25 +136,25 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
 
       if (!videoId || !isValidYTId(videoId)) {
         const query = `${track.artist} ${track.title} audio -"full album" -"live"`;
-        const res = await fetch(`/api/youtube?q=${encodeURIComponent(query)}`);
+        const resSearch = await fetch(`/api/youtube?q=${encodeURIComponent(query)}`);
+        if (!resSearch.ok) throw new Error("Musique introuvable.");
         
-        if (!res.ok) throw new Error("Musique introuvable.");
-        
-        const data = await res.json();
-        if (data.videoId) {
-           videoId = data.videoId;
+        const dataSearch = await resSearch.json();
+        if (dataSearch.videoId) {
+           videoId = dataSearch.videoId;
            ytCacheRef.current[track.id] = videoId;
         } else {
            throw new Error("ID introuvable.");
         }
       }
 
-      setPlayingUrl(videoId);
+      setPlayingUrl(`/api/stream?videoId=${videoId}&t=${Date.now()}`);
       setStatus("playing");
 
     } catch (error: any) {
       setPlaybackError(error.message);
       setStatus("idle");
+      // Passe au suivant après 2s si ça crash
       setTimeout(() => playNextRef.current(), 2000);
     }
   }, []);
@@ -202,9 +206,15 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     }
   }, [loadAndPlayUrl]);
 
-  const toggleShuffle = useCallback(() => setIsShuffle(prev => !prev), []);
+  const toggleShuffle = useCallback(() => {
+    isShuffleRef.current = !isShuffleRef.current;
+    setIsShuffle(prev => !prev);
+  }, []);
+
   const toggleRepeat = useCallback(() => {
-    setRepeatMode(prev => prev === "off" ? "all" : prev === "all" ? "one" : "off");
+    const nextMode = repeatModeRef.current === "off" ? "all" : repeatModeRef.current === "all" ? "one" : "off";
+    repeatModeRef.current = nextMode;
+    setRepeatMode(nextMode);
   }, []);
 
   const togglePlayPause = useCallback(() => {

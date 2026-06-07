@@ -14,6 +14,7 @@ import { OrientationLock } from "@/components/ui/OrientationLock";
 import { NetworkStatus } from "@/components/ui/NetworkStatus"; 
 import { AnimationProvider } from "@/components/ui/AnimationProvider"; 
 import "./globals.css";
+import { ServerWakeUp } from "@/components/ServerWakeUp";
 
 const plusJakarta = Plus_Jakarta_Sans({
   variable: "--font-sans", 
@@ -85,6 +86,7 @@ export default function RootLayout({
             </PlaylistProvider>
           </MusicProvider>
         </AuthProvider>
+        <ServerWakeUp />
       </body>
     </html>
   );

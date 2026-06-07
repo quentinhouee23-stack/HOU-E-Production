@@ -1,14 +1,11 @@
-/** @type {import('next').NextConfig} */
-const nextConfig = {
-  reactCompiler: true,
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
   images: {
-    // 🟢 OPTIMISATION : Next.js garde les images en mémoire pendant 1 an !
-    minimumCacheTTL: 31536000, 
+    dangerouslyAllowSVG: true,      // ← Fix le warning dicebear SVG
+    contentSecurityPolicy: "default-src 'self'; script-src 'none'; sandbox;",
     remotePatterns: [
-      { 
-        protocol: "https", 
-        hostname: "**" 
-      },
+      { protocol: "https", hostname: "**" },
     ],
   },
 };

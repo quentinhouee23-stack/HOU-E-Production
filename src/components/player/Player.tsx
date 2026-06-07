@@ -1,183 +1,68 @@
-// @ts-nocheck
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
 import { useMusic } from "@/context/MusicContext";
 
 export function Player() {
-  const { playingUrl: videoId, status, volume, onDuration, onProgress, onEnded, seekRequest, clearSeekRequest, playbackError, setPlaybackError } = useMusic();
+  const {
+    playingUrl, status, volume,
+    onDuration, onProgress, onEnded,
+    seekRequest, clearSeekRequest,
+    setPlaybackError,
+  } = useMusic();
+
+  const audioRef = useRef<HTMLAudioElement>(null);
   const [isClient, setIsClient] = useState(false);
-  
-  const ytPlayerInstance = useRef<any>(null);
-  const progressInterval = useRef<NodeJS.Timeout | null>(null);
-  const isReady = useRef(false);
-  const pendingVideoId = useRef<string | null>(null);
+  const isReadyRef = useRef(false); // true quand l'audio a assez de données
 
-  // Le bouclier pour empêcher iOS de suspendre l'application
-  const ghostAudioRef = useRef<HTMLAudioElement>(null);
+  useEffect(() => setIsClient(true), []);
 
-  const onEndedRef = useRef(onEnded);
-  const onDurationRef = useRef(onDuration);
-  const onProgressRef = useRef(onProgress);
-
-  useEffect(() => { onEndedRef.current = onEnded; }, [onEnded]);
-  useEffect(() => { onDurationRef.current = onDuration; }, [onDuration]);
-  useEffect(() => { onProgressRef.current = onProgress; }, [onProgress]);
-
-  // 1. Activation du bouclier au premier tap sur l'écran
+  // Chargement nouvelle URL
   useEffect(() => {
-    const unlockAudio = () => {
-      if (ghostAudioRef.current && ghostAudioRef.current.paused) {
-        ghostAudioRef.current.play().catch(() => {});
+    const audio = audioRef.current;
+    if (!audio || !playingUrl) return;
+
+    isReadyRef.current = false;
+
+    audio.pause();
+    audio.src = "";
+    audio.load();
+
+    audio.src = playingUrl;
+    audio.preload = "auto"; // ← "auto" au lieu de "metadata" : charge tout de suite
+    audio.load();
+
+    // Si status est déjà "playing" au moment du chargement,
+    // on laisse onCanPlayThrough déclencher le play
+  }, [playingUrl]);
+
+  // Play / Pause
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    if (status === "playing") {
+      if (isReadyRef.current) {
+        // Audio prêt → play immédiat
+        audio.play().catch(console.warn);
       }
-    };
-    document.addEventListener("touchstart", unlockAudio, { once: true });
-    document.addEventListener("click", unlockAudio, { once: true });
-    return () => {
-      document.removeEventListener("touchstart", unlockAudio);
-      document.removeEventListener("click", unlockAudio);
-    };
-  }, []);
-
-  useEffect(() => {
-    setIsClient(true);
-
-    const initPlayer = () => {
-      if (!document.getElementById("youtube-player-div")) return;
-
-      ytPlayerInstance.current = new window.YT.Player("youtube-player-div", {
-        width: "100", 
-        height: "100",
-        playerVars: {
-          autoplay: 1, 
-          controls: 0, 
-          disablekb: 1, 
-          fs: 0, 
-          rel: 0, 
-          modestbranding: 1,
-          playsinline: 1,
-          enablejsapi: 1,
-          origin: typeof window !== "undefined" ? window.location.origin : ""
-        },
-        events: {
-          onReady: (event: any) => {
-            isReady.current = true;
-            event.target.setVolume(volume * 100);
-            
-            const vidToLoad = pendingVideoId.current || videoId;
-            if (vidToLoad) {
-              if (status === "playing") event.target.loadVideoById(vidToLoad);
-              else event.target.cueVideoById(vidToLoad);
-              pendingVideoId.current = null;
-            }
-          },
-          onStateChange: (event: any) => {
-            if (event.data === window.YT.PlayerState.PLAYING) {
-              // On s'assure que le bouclier silencieux tourne bien
-              if (ghostAudioRef.current && ghostAudioRef.current.paused) {
-                 ghostAudioRef.current.play().catch(() => {});
-              }
-
-              const dur = event.target.getDuration();
-              if (dur > 0) onDurationRef.current(dur);
-
-              event.target.unMute();
-              event.target.setVolume(volume * 100);
-
-              if (progressInterval.current) clearInterval(progressInterval.current);
-              progressInterval.current = setInterval(() => {
-                onProgressRef.current({ playedSeconds: event.target.getCurrentTime() }); 
-              }, 1000);
-            } else {
-              if (progressInterval.current) clearInterval(progressInterval.current);
-            }
-
-            // 🚨 LE CONTRE-BRAQUAGE ANTI-PAUSE
-            if (event.data === window.YT.PlayerState.PAUSED) {
-               if (document.hidden || document.visibilityState === "hidden") {
-                  // YouTube vient de se mettre en pause parce qu'on a verrouillé l'écran.
-                  // On le relance immédiatement !
-                  event.target.playVideo();
-               }
-            }
-            
-            if (event.data === window.YT.PlayerState.ENDED) {
-              onEndedRef.current(); 
-            }
-          },
-          onError: (event: any) => {
-            console.error("YouTube Player Error", event.data);
-            setPlaybackError("Vidéo bloquée par YouTube. Zapping...");
-            setTimeout(() => {
-              setPlaybackError(null);
-              onEndedRef.current();
-            }, 2000);
-          }
-        }
-      });
-    };
-
-    if (!window.YT) {
-      const script = document.createElement("script");
-      script.src = "https://www.youtube.com/iframe_api";
-      document.body.appendChild(script);
-      window.onYouTubeIframeAPIReady = initPlayer;
-    } else if (!ytPlayerInstance.current) {
-      initPlayer();
-    }
-
-    return () => {
-      if (progressInterval.current) clearInterval(progressInterval.current);
-    };
-  }, []);
-
-  // 2. Le deuxième filet de sécurité pour le verrouillage
-  useEffect(() => {
-    const handleVisibility = () => {
-      if (document.hidden && status === "playing") {
-         const player = ytPlayerInstance.current;
-         if (player && player.playVideo) {
-            // Si on verrouille, on s'assure que le lecteur reçoit l'ordre de jouer
-            setTimeout(() => player.playVideo(), 150);
-         }
-      }
-    };
-    document.addEventListener("visibilitychange", handleVisibility);
-    return () => document.removeEventListener("visibilitychange", handleVisibility);
-  }, [status]);
-
-  // Charge/joue la vidéo quand videoId ou status change
-  useEffect(() => {
-    const player = ytPlayerInstance.current;
-    if (!videoId || !player?.loadVideoById || !isReady.current) {
-      if (videoId) pendingVideoId.current = videoId;
-      return;
-    }
-    
-    if (status === "playing") player.loadVideoById(videoId);
-    else player.cueVideoById(videoId);
-  }, [videoId, status]);
-
-  // Gère Play / Pause
-  useEffect(() => {
-    const player = ytPlayerInstance.current;
-    if (player?.playVideo) {
-      if (status === "playing") player.playVideo();
-      else if (status === "paused" || status === "idle") player.pauseVideo();
+      // Sinon onCanPlayThrough va le faire dès que c'est prêt
+    } else if (status === "paused") {
+      audio.pause();
     }
   }, [status]);
 
-  // Gère le Volume
+  // Volume
   useEffect(() => {
-    if (ytPlayerInstance.current?.setVolume) {
-      ytPlayerInstance.current.setVolume(volume * 100);
+    if (audioRef.current) {
+      audioRef.current.volume = Math.max(0, Math.min(1, volume));
     }
   }, [volume]);
 
-  // Gère le temps (Seek)
+  // Seek
   useEffect(() => {
-    if (seekRequest !== null && ytPlayerInstance.current?.seekTo) {
-      ytPlayerInstance.current.seekTo(seekRequest, true);
+    if (seekRequest !== null && audioRef.current) {
+      audioRef.current.currentTime = seekRequest;
       clearSeekRequest();
     }
   }, [seekRequest, clearSeekRequest]);
@@ -185,47 +70,34 @@ export function Player() {
   if (!isClient) return null;
 
   return (
-    <>
-      {playbackError && (
-        <div style={{
-          position: "fixed", top: 0, left: 0, right: 0, zIndex: 99999,
-          backgroundColor: "#ff0000", color: "#ffffff", padding: "15px",
-          fontFamily: "monospace", fontSize: "14px", textAlign: "center",
-        }}>
-          <strong>🚨 {playbackError}</strong>
-        </div>
-      )}
-
-      {/* L'iframe transparente qui joue la vraie musique */}
-      <div style={{
-        position: "fixed",
-        top: "0",
-        left: "0",
-        width: "1px",
-        height: "1px",
-        opacity: 0.01, 
-        pointerEvents: "none",
-        zIndex: -1, 
-      }}>
-        <div id="youtube-player-div" />
-      </div>
-
-      {/* Piste fantôme pour tromper iOS. 
-          SURTOUT PAS DE display: none, sinon iOS la bloque. */}
-      <audio
-        ref={ghostAudioRef}
-        src="data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA"
-        loop
-        playsInline
-        style={{
-          position: "absolute",
-          width: "1px",
-          height: "1px",
-          opacity: 0.01,
-          pointerEvents: "none",
-          bottom: 0
-        }}
-      />
-    </>
+    <audio
+      ref={audioRef}
+      playsInline
+      preload="auto"
+      onCanPlayThrough={() => {
+        // Déclenché quand assez de données sont chargées pour jouer sans interruption
+        isReadyRef.current = true;
+        if (status === "playing") {
+          audioRef.current?.play().catch(console.warn);
+        }
+      }}
+      onTimeUpdate={() =>
+        onProgress({ playedSeconds: audioRef.current?.currentTime ?? 0 })
+      }
+      onDurationChange={() => {
+        const d = audioRef.current?.duration;
+        if (d && isFinite(d)) onDuration(d);
+      }}
+      onEnded={onEnded}
+      onError={(e) => {
+        const code = (e.target as HTMLAudioElement).error?.code;
+        const msg =
+          code === 4 ? "Format audio non supporté."
+          : code === 2 ? "Erreur réseau."
+          : "Erreur audio inconnue.";
+        setPlaybackError(msg);
+      }}
+      style={{ position: "absolute", width: "1px", height: "1px", opacity: 0.01, pointerEvents: "none", bottom: 0 }}
+    />
   );
 }
