@@ -6,8 +6,8 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 async function getYtDlp(): Promise<YTDlpWrap> {
-  // Sur Render, on utilise toujours la version installée par le Dockerfile
   const path = process.env.YTDLP_PATH || "/usr/local/bin/yt-dlp";
+  console.log("Vérification de l'emplacement yt-dlp :", path);
   return new YTDlpWrap(path);
 }
 
@@ -66,7 +66,8 @@ export async function GET(req: Request) {
     });
 
   } catch (e: any) {
-    console.error("[stream] Erreur:", e.message);
-    return new Response(`Erreur: ${e.message}`, { status: 500 });
+    // On affiche l'objet entier pour voir ce qui bloque
+    console.error("[stream] Erreur complète:", e); 
+    return new Response(`Erreur: ${e instanceof Error ? e.message : String(e)}`, { status: 500 });
   }
 }
