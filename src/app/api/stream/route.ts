@@ -6,17 +6,14 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 async function getYtDlp(): Promise<YTDlpWrap> {
-  const railwayPath = process.env.YTDLP_PATH || "/usr/local/bin/yt-dlp";
+  // 1. Si la variable Docker existe (donc on est sur Render / Linux)
+  if (process.env.YTDLP_PATH) {
+    return new YTDlpWrap(process.env.YTDLP_PATH);
+  }
+
+  // 2. Sinon, on est sur ton PC en développement (Windows)
   const binPathExe = join(process.cwd(), "bin", "yt-dlp.exe");
-  const binPath = join(process.cwd(), "bin", "yt-dlp");
-
-  if (existsSync(railwayPath)) return new YTDlpWrap(railwayPath);
-  if (existsSync(binPathExe)) return new YTDlpWrap(binPathExe);
-  if (existsSync(binPath)) return new YTDlpWrap(binPath);
-
-  const downloadPath = process.platform === "win32" ? binPathExe : binPath;
-  await YTDlpWrap.downloadFromGithub(downloadPath);
-  return new YTDlpWrap(downloadPath);
+  return new YTDlpWrap(binPathExe);
 }
 
 export async function GET(req: Request) {
