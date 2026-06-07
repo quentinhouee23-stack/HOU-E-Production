@@ -12,6 +12,15 @@ COPY package*.json ./
 RUN npm ci --production=false
 
 COPY . .
+
+# --- LA MAGIE EST ICI : On récupère les clés de Render ---
+ARG NEXT_PUBLIC_SUPABASE_URL
+ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
+
+ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL
+ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
+# ---------------------------------------------------------
+
 RUN npm run build
 
 ENV NODE_ENV=production
