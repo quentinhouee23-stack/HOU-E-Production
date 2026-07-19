@@ -38,7 +38,7 @@ export async function GET(req: Request) {
       "--get-url",
       "-f", "bestaudio[ext=m4a]/140/bestaudio",
       "--no-playlist",
-      "--js-runtimes", "nodejs"
+      "--js-runtimes", "node"
     ];
 
     if (existsSync(cookiesPath)) {

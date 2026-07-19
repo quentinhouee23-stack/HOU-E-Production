@@ -41,7 +41,7 @@ export async function GET(req: Request) {
       "--get-id",
       "--no-playlist",
       "--default-search", "ytsearch",
-      "--js-runtimes", "nodejs"
+      "--js-runtimes", "node"
     ];
 
     if (existsSync(cookiesPath)) {
