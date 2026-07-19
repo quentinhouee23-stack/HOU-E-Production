@@ -16,8 +16,33 @@ export function Player() {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [isClient, setIsClient] = useState(false);
   const isReadyRef = useRef(false);
+  const hasUnlockedRef = useRef(false); // Garde en mémoire si le téléphone est débloqué
 
   useEffect(() => setIsClient(true), []);
+
+  // === LA MAGIE POUR MOBILE : DÉBLOQUER L'AUDIO ===
+  useEffect(() => {
+    const unlockAudio = () => {
+      if (audioRef.current && !hasUnlockedRef.current) {
+        // On lance et on met en pause instantanément pour obtenir l'autorisation d'Apple/Google
+        audioRef.current.play().then(() => {
+          audioRef.current?.pause();
+          hasUnlockedRef.current = true;
+        }).catch(() => {});
+
+        document.removeEventListener('touchstart', unlockAudio);
+        document.removeEventListener('click', unlockAudio);
+      }
+    };
+
+    document.addEventListener('touchstart', unlockAudio, { once: true });
+    document.addEventListener('click', unlockAudio, { once: true });
+
+    return () => {
+      document.removeEventListener('touchstart', unlockAudio);
+      document.removeEventListener('click', unlockAudio);
+    };
+  }, []);
 
   // 1. Chargement de l'URL
   useEffect(() => {
@@ -25,13 +50,13 @@ export function Player() {
     if (!audio || !playingUrl) return;
 
     isReadyRef.current = false;
-    audio.pause();
-    audio.src = "";
+    audio.src = playingUrl; // On injecte directement la source
     audio.load();
 
-    audio.src = playingUrl;
-    audio.preload = "auto";
-    audio.load();
+    // Sur mobile, on force la lecture immédiatement pour ne pas perdre l'autorisation du clic
+    if (status === "playing") {
+      audio.play().catch(e => console.warn("Lecture bloquée par le navigateur:", e));
+    }
   }, [playingUrl]);
 
   // 2. Play / Pause
@@ -40,9 +65,7 @@ export function Player() {
     if (!audio) return;
 
     if (status === "playing") {
-      if (isReadyRef.current) {
-        audio.play().catch(console.warn);
-      }
+      audio.play().catch(console.warn);
     } else if (status === "paused") {
       audio.pause();
     }
@@ -66,7 +89,6 @@ export function Player() {
   // 5. Arrière-plan pour téléphone (Mode Spotify)
   useEffect(() => {
     if ('mediaSession' in navigator && currentTrack) {
-      // On force le type pour éviter l'erreur de "thumbnail", "image_url" ou "cover"
       const trackImage = (currentTrack as any).image_url 
         || (currentTrack as any).thumbnail 
         || (currentTrack as any).cover 
@@ -98,7 +120,7 @@ export function Player() {
   return (
     <audio
       ref={audioRef}
-      playsInline
+      playsInline // <-- CRUCIAL pour iPhone, empêche Safari de bloquer la lecture
       preload="auto"
       onCanPlayThrough={() => {
         isReadyRef.current = true;
@@ -115,12 +137,7 @@ export function Player() {
       }}
       onEnded={onEnded}
       onError={(e) => {
-        const code = (e.target as HTMLAudioElement).error?.code;
-        const msg =
-          code === 4 ? "Format audio non supporté."
-          : code === 2 ? "Erreur réseau."
-          : "Erreur audio inconnue.";
-        setPlaybackError(msg);
+        console.warn("Erreur Audio Mobile:", (e.target as HTMLAudioElement).error);
       }}
       style={{ position: "absolute", width: "1px", height: "1px", opacity: 0.01, pointerEvents: "none", bottom: 0 }}
     />
