@@ -31,25 +31,15 @@ export async function GET(req: Request) {
     if (!q) return NextResponse.json({ error: "Recherche vide" }, { status: 400 });
 
     const ytDlp = await getYtDlp();
-    const cookiesPath = join(process.cwd(), "cookies.txt");
     
-    console.log("[youtube] Vérification cookies.txt au chemin :", cookiesPath);
-    console.log("[youtube] Le fichier existe-t-il ? :", existsSync(cookiesPath));
-
+    // LA MAGIE EST ICI : On se déguise en téléphone Android
     const ytArgs = [
       `ytsearch1:${q}`,
       "--get-id",
       "--no-playlist",
       "--default-search", "ytsearch",
-      "--js-runtimes", "node"
+      "--extractor-args", "youtube:client=android"
     ];
-
-    if (existsSync(cookiesPath)) {
-      ytArgs.push("--cookies", cookiesPath);
-      console.log("[youtube] Cookies ajoutés à la requête !");
-    } else {
-      console.log("[youtube] ATTENTION : Fichier cookies.txt introuvable !");
-    }
 
     const result = await ytDlp.execPromise(ytArgs);
 

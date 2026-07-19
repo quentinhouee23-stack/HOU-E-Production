@@ -31,19 +31,15 @@ export async function GET(req: Request) {
   try {
     const ytDlp = await getYtDlp();
     const url = `https://www.youtube.com/watch?v=${videoId}`;
-    const cookiesPath = join(process.cwd(), "cookies.txt");
 
+    // LA MAGIE EST ICI : On se déguise en téléphone Android
     const ytArgs = [
       url,
       "--get-url",
       "-f", "bestaudio[ext=m4a]/140/bestaudio",
       "--no-playlist",
-      "--js-runtimes", "node"
+      "--extractor-args", "youtube:client=android"
     ];
-
-    if (existsSync(cookiesPath)) {
-      ytArgs.push("--cookies", cookiesPath);
-    }
 
     const rawOutput = await ytDlp.execPromise(ytArgs);
 
