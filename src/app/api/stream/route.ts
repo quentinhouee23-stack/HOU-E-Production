@@ -31,21 +31,28 @@ export async function GET(req: Request) {
   try {
     const ytDlp = await getYtDlp();
     const url = `https://www.youtube.com/watch?v=${videoId}`;
+    const cookiesPath = join(process.cwd(), "cookies.txt");
 
-    // Étape 1 : récupère l'URL audio signée
-    const rawOutput = await ytDlp.execPromise([
+    // On prépare les arguments de base
+    const ytArgs = [
       url,
       "--get-url",
       "-f", "bestaudio[ext=m4a]/140/bestaudio",
-      "--no-playlist",
-    ]);
+      "--no-playlist"
+    ];
+
+    // Si le fichier cookies.txt existe, on l'ajoute à la commande
+    if (existsSync(cookiesPath)) {
+      ytArgs.push("--cookies", cookiesPath);
+    }
+
+    const rawOutput = await ytDlp.execPromise(ytArgs);
 
     const audioUrl = rawOutput.trim().split("\n")[0];
     if (!audioUrl?.startsWith("http")) {
       return new Response("URL audio introuvable", { status: 404 });
     }
 
-    // Étape 2 : relay avec Range requests (vital pour iPhone/Safari)
     const rangeHeader = req.headers.get("range");
 
     const upstream = await fetch(audioUrl, {
@@ -64,7 +71,6 @@ export async function GET(req: Request) {
       "Cache-Control": "no-store",
     });
 
-    // CRUCIAL pour la fluidité : Content-Length et Content-Range
     const contentLength = upstream.headers.get("Content-Length");
     const contentRange = upstream.headers.get("Content-Range");
     const contentType = upstream.headers.get("Content-Type");
@@ -73,7 +79,7 @@ export async function GET(req: Request) {
     if (contentType) responseHeaders.set("Content-Type", contentType);
 
     return new Response(upstream.body, {
-      status: upstream.status, // 200 ou 206
+      status: upstream.status,
       headers: responseHeaders,
     });
 

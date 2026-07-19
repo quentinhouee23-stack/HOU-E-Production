@@ -31,14 +31,22 @@ export async function GET(req: Request) {
     if (!q) return NextResponse.json({ error: "Recherche vide" }, { status: 400 });
 
     const ytDlp = await getYtDlp();
-
-    // Recherche YouTube via yt-dlp
-    const result = await ytDlp.execPromise([
-      `ytsearch1:${q}`,              // Cherche le 1er résultat
-      "--get-id",                    // Retourne juste l'ID
+    const cookiesPath = join(process.cwd(), "cookies.txt");
+    
+    // On prépare les arguments de base
+    const ytArgs = [
+      `ytsearch1:${q}`,
+      "--get-id",
       "--no-playlist",
-      "--default-search", "ytsearch",
-    ]);
+      "--default-search", "ytsearch"
+    ];
+
+    // Si le fichier cookies.txt existe, on l'ajoute à la commande
+    if (existsSync(cookiesPath)) {
+      ytArgs.push("--cookies", cookiesPath);
+    }
+
+    const result = await ytDlp.execPromise(ytArgs);
 
     const videoId = result.trim();
     if (!videoId || videoId.length !== 11) {
