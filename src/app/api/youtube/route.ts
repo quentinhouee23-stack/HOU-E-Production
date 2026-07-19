@@ -7,17 +7,15 @@ export const runtime = "nodejs";
 export const maxDuration = 15;
 
 async function getYtDlp(): Promise<YTDlpWrap> {
-  if (process.env.YTDLP_PATH) {
-    return new YTDlpWrap(process.env.YTDLP_PATH);
-  }
-
-  const binDir = join(process.cwd(), "bin");
+  // On ignore la version périmée de Render et on télécharge la dernière mise à jour dans /tmp
+  const isProd = process.env.NODE_ENV === "production" || !!process.env.RENDER;
+  const binDir = isProd ? "/tmp/yt-bin" : join(process.cwd(), "bin");
   const exeName = process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp";
   const localPath = join(binDir, exeName);
 
   if (!existsSync(localPath)) {
     if (!existsSync(binDir)) mkdirSync(binDir, { recursive: true });
-    console.log("Téléchargement local de yt-dlp...");
+    console.log("Téléchargement de la dernière mise à jour de yt-dlp...");
     await YTDlpWrap.downloadFromGithub(localPath);
   }
 
@@ -31,15 +29,22 @@ export async function GET(req: Request) {
     if (!q) return NextResponse.json({ error: "Recherche vide" }, { status: 400 });
 
     const ytDlp = await getYtDlp();
-    
-    // LA MAGIE EST ICI : On se déguise en téléphone Android
+    const cookiesPath = join(process.cwd(), "cookies.txt");
+
+    // L'armure complète : recherche + node JS + Android
     const ytArgs = [
       `ytsearch1:${q}`,
       "--get-id",
       "--no-playlist",
       "--default-search", "ytsearch",
+      "--js-runtimes", "node",
       "--extractor-args", "youtube:client=android"
     ];
+
+    // On ajoute tes cookies s'ils sont là
+    if (existsSync(cookiesPath)) {
+      ytArgs.push("--cookies", cookiesPath);
+    }
 
     const result = await ytDlp.execPromise(ytArgs);
 

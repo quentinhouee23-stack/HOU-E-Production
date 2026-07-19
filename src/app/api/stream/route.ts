@@ -6,17 +6,14 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 async function getYtDlp(): Promise<YTDlpWrap> {
-  if (process.env.YTDLP_PATH) {
-    return new YTDlpWrap(process.env.YTDLP_PATH);
-  }
-
-  const binDir = join(process.cwd(), "bin");
+  const isProd = process.env.NODE_ENV === "production" || !!process.env.RENDER;
+  const binDir = isProd ? "/tmp/yt-bin" : join(process.cwd(), "bin");
   const exeName = process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp";
   const localPath = join(binDir, exeName);
 
   if (!existsSync(localPath)) {
     if (!existsSync(binDir)) mkdirSync(binDir, { recursive: true });
-    console.log("Téléchargement local de yt-dlp...");
+    console.log("Téléchargement de la dernière mise à jour de yt-dlp...");
     await YTDlpWrap.downloadFromGithub(localPath);
   }
 
@@ -31,15 +28,20 @@ export async function GET(req: Request) {
   try {
     const ytDlp = await getYtDlp();
     const url = `https://www.youtube.com/watch?v=${videoId}`;
+    const cookiesPath = join(process.cwd(), "cookies.txt");
 
-    // LA MAGIE EST ICI : On se déguise en téléphone Android
     const ytArgs = [
       url,
       "--get-url",
       "-f", "bestaudio[ext=m4a]/140/bestaudio",
       "--no-playlist",
+      "--js-runtimes", "node",
       "--extractor-args", "youtube:client=android"
     ];
+
+    if (existsSync(cookiesPath)) {
+      ytArgs.push("--cookies", cookiesPath);
+    }
 
     const rawOutput = await ytDlp.execPromise(ytArgs);
 
