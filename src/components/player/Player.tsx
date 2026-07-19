@@ -5,67 +5,93 @@ import { useMusic } from "@/context/MusicContext";
 
 export function Player() {
   const {
+    currentTrack,
     playingUrl, status, volume,
     onDuration, onProgress, onEnded,
     seekRequest, clearSeekRequest,
-    setPlaybackError,
+    setPlaybackError, 
+    playNext, playPrev, togglePlayPause
   } = useMusic();
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const [isClient, setIsClient] = useState(false);
-  const isReadyRef = useRef(false); // true quand l'audio a assez de données
+  const isReadyRef = useRef(false);
 
   useEffect(() => setIsClient(true), []);
 
-  // Chargement nouvelle URL
+  // 1. Chargement de l'URL
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !playingUrl) return;
 
     isReadyRef.current = false;
-
     audio.pause();
     audio.src = "";
     audio.load();
 
     audio.src = playingUrl;
-    audio.preload = "auto"; // ← "auto" au lieu de "metadata" : charge tout de suite
+    audio.preload = "auto";
     audio.load();
-
-    // Si status est déjà "playing" au moment du chargement,
-    // on laisse onCanPlayThrough déclencher le play
   }, [playingUrl]);
 
-  // Play / Pause
+  // 2. Play / Pause
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
 
     if (status === "playing") {
       if (isReadyRef.current) {
-        // Audio prêt → play immédiat
         audio.play().catch(console.warn);
       }
-      // Sinon onCanPlayThrough va le faire dès que c'est prêt
     } else if (status === "paused") {
       audio.pause();
     }
   }, [status]);
 
-  // Volume
+  // 3. Volume
   useEffect(() => {
     if (audioRef.current) {
       audioRef.current.volume = Math.max(0, Math.min(1, volume));
     }
   }, [volume]);
 
-  // Seek
+  // 4. Seek (Avancer/Reculer)
   useEffect(() => {
     if (seekRequest !== null && audioRef.current) {
       audioRef.current.currentTime = seekRequest;
       clearSeekRequest();
     }
   }, [seekRequest, clearSeekRequest]);
+
+  // 5. Arrière-plan pour téléphone (Mode Spotify)
+  useEffect(() => {
+    if ('mediaSession' in navigator && currentTrack) {
+      // On force le type pour éviter l'erreur de "thumbnail", "image_url" ou "cover"
+      const trackImage = (currentTrack as any).image_url 
+        || (currentTrack as any).thumbnail 
+        || (currentTrack as any).cover 
+        || 'https://api.dicebear.com/7.x/shapes/png?seed=music';
+
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: currentTrack.title,
+        artist: currentTrack.artist,
+        artwork: [
+          { src: trackImage, sizes: '512x512', type: 'image/png' }
+        ]
+      });
+
+      navigator.mediaSession.setActionHandler('play', () => {
+        audioRef.current?.play();
+        togglePlayPause();
+      });
+      navigator.mediaSession.setActionHandler('pause', () => {
+        audioRef.current?.pause();
+        togglePlayPause();
+      });
+      navigator.mediaSession.setActionHandler('previoustrack', () => playPrev());
+      navigator.mediaSession.setActionHandler('nexttrack', () => playNext());
+    }
+  }, [currentTrack, playNext, playPrev, togglePlayPause]);
 
   if (!isClient) return null;
 
@@ -75,7 +101,6 @@ export function Player() {
       playsInline
       preload="auto"
       onCanPlayThrough={() => {
-        // Déclenché quand assez de données sont chargées pour jouer sans interruption
         isReadyRef.current = true;
         if (status === "playing") {
           audioRef.current?.play().catch(console.warn);

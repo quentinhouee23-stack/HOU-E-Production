@@ -1,19 +1,27 @@
 import YTDlpWrap from "yt-dlp-wrap";
 import { join } from "path";
-import { existsSync } from "fs";
+import { existsSync, mkdirSync } from "fs";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 export const maxDuration = 15;
 
 async function getYtDlp(): Promise<YTDlpWrap> {
-  const binPath = join(process.cwd(), "bin", "yt-dlp");
-  const binPathExe = join(process.cwd(), "bin", "yt-dlp.exe");
-  const path = existsSync(binPathExe) ? binPathExe : existsSync(binPath) ? binPath : null;
-  if (path) return new YTDlpWrap(path);
-  const downloadPath = process.platform === "win32" ? binPathExe : binPath;
-  await YTDlpWrap.downloadFromGithub(downloadPath);
-  return new YTDlpWrap(downloadPath);
+  if (process.env.YTDLP_PATH) {
+    return new YTDlpWrap(process.env.YTDLP_PATH);
+  }
+
+  const binDir = join(process.cwd(), "bin");
+  const exeName = process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp";
+  const localPath = join(binDir, exeName);
+
+  if (!existsSync(localPath)) {
+    if (!existsSync(binDir)) mkdirSync(binDir, { recursive: true });
+    console.log("Téléchargement local de yt-dlp...");
+    await YTDlpWrap.downloadFromGithub(localPath);
+  }
+
+  return new YTDlpWrap(localPath);
 }
 
 export async function GET(req: Request) {
@@ -27,7 +35,7 @@ export async function GET(req: Request) {
     // Recherche YouTube via yt-dlp
     const result = await ytDlp.execPromise([
       `ytsearch1:${q}`,              // Cherche le 1er résultat
-      "--get-id",                     // Retourne juste l'ID
+      "--get-id",                    // Retourne juste l'ID
       "--no-playlist",
       "--default-search", "ytsearch",
     ]);

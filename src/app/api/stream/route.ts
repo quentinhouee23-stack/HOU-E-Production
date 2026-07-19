@@ -1,14 +1,26 @@
 import YTDlpWrap from "yt-dlp-wrap";
 import { join } from "path";
-import { existsSync } from "fs";
+import { existsSync, mkdirSync } from "fs";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
 async function getYtDlp(): Promise<YTDlpWrap> {
-  const path = process.env.YTDLP_PATH || "/usr/local/bin/yt-dlp";
-  console.log("Vérification de l'emplacement yt-dlp :", path);
-  return new YTDlpWrap(path);
+  if (process.env.YTDLP_PATH) {
+    return new YTDlpWrap(process.env.YTDLP_PATH);
+  }
+
+  const binDir = join(process.cwd(), "bin");
+  const exeName = process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp";
+  const localPath = join(binDir, exeName);
+
+  if (!existsSync(localPath)) {
+    if (!existsSync(binDir)) mkdirSync(binDir, { recursive: true });
+    console.log("Téléchargement local de yt-dlp...");
+    await YTDlpWrap.downloadFromGithub(localPath);
+  }
+
+  return new YTDlpWrap(localPath);
 }
 
 export async function GET(req: Request) {
@@ -66,8 +78,7 @@ export async function GET(req: Request) {
     });
 
   } catch (e: any) {
-    // On affiche l'objet entier pour voir ce qui bloque
-    console.error("[stream] Erreur complète:", e); 
-    return new Response(`Erreur: ${e instanceof Error ? e.message : String(e)}`, { status: 500 });
+    console.error("[stream] Erreur brute:", e);
+    return new Response(`Erreur: ${JSON.stringify(e)}`, { status: 500 });
   }
 }
