@@ -33,15 +33,14 @@ export async function GET(req: Request) {
     const url = `https://www.youtube.com/watch?v=${videoId}`;
     const cookiesPath = join(process.cwd(), "cookies.txt");
 
-    // On prépare les arguments de base
     const ytArgs = [
       url,
       "--get-url",
       "-f", "bestaudio[ext=m4a]/140/bestaudio",
-      "--no-playlist"
+      "--no-playlist",
+      "--js-runtimes", "nodejs"
     ];
 
-    // Si le fichier cookies.txt existe, on l'ajoute à la commande
     if (existsSync(cookiesPath)) {
       ytArgs.push("--cookies", cookiesPath);
     }

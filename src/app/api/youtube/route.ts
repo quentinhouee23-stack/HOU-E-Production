@@ -33,17 +33,22 @@ export async function GET(req: Request) {
     const ytDlp = await getYtDlp();
     const cookiesPath = join(process.cwd(), "cookies.txt");
     
-    // On prépare les arguments de base
+    console.log("[youtube] Vérification cookies.txt au chemin :", cookiesPath);
+    console.log("[youtube] Le fichier existe-t-il ? :", existsSync(cookiesPath));
+
     const ytArgs = [
       `ytsearch1:${q}`,
       "--get-id",
       "--no-playlist",
-      "--default-search", "ytsearch"
+      "--default-search", "ytsearch",
+      "--js-runtimes", "nodejs"
     ];
 
-    // Si le fichier cookies.txt existe, on l'ajoute à la commande
     if (existsSync(cookiesPath)) {
       ytArgs.push("--cookies", cookiesPath);
+      console.log("[youtube] Cookies ajoutés à la requête !");
+    } else {
+      console.log("[youtube] ATTENTION : Fichier cookies.txt introuvable !");
     }
 
     const result = await ytDlp.execPromise(ytArgs);
