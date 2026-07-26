@@ -6,7 +6,6 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 async function getYtDlp(): Promise<YTDlpWrap> {
-  // Retour à la version stable de ton serveur
   if (process.env.RENDER || process.env.NODE_ENV === "production") {
     return new YTDlpWrap(process.env.YTDLP_PATH || "/usr/local/bin/yt-dlp");
   }
@@ -32,16 +31,27 @@ export async function GET(req: Request) {
   try {
     const ytDlp = await getYtDlp();
     const url = `https://www.youtube.com/watch?v=${videoId}`;
+    
+    // On sécurise la recherche des cookies (Next.js a tendance à les perdre en route)
+    let cookiesPath = join(process.cwd(), "cookies.txt");
+    if (!existsSync(cookiesPath)) cookiesPath = "/app/cookies.txt";
 
-    // Code de Claude pour l'audio (parfait pour le fond et l'iPhone)
+    // ASTUCE ANTI-429 : On passe sur iOS au lieu d'Android
     const ytArgs = [
       url,
       "-f", "bestaudio[ext=m4a]/bestaudio",
       "--no-playlist",
       "-j", 
       "--js-runtimes", "node",
-      "--extractor-args", "youtube:player_client=android",
+      "--extractor-args", "youtube:player_client=ios", 
     ];
+
+    if (existsSync(cookiesPath)) {
+      ytArgs.push("--cookies", cookiesPath);
+      console.log("[stream] Cookies trouvés et activés !");
+    } else {
+      console.log("[stream] ATTENTION : Cookies introuvables au chemin", cookiesPath);
+    }
 
     const rawOutput = await ytDlp.execPromise(ytArgs);
     const info = JSON.parse(rawOutput.trim().split("\n").pop()!);
