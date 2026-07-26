@@ -38,7 +38,7 @@ export async function GET(req: Request) {
       "--no-playlist",
       "--default-search", "ytsearch",
       "--js-runtimes", "node",
-      "--extractor-args", "youtube:client=android"
+      "--extractor-args", "youtube:player_client=android",
     ];
 
     // On ajoute tes cookies s'ils sont là

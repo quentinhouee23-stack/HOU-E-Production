@@ -44,33 +44,38 @@ export function Player() {
     };
   }, []);
 
-  // 1. Chargement de l'URL
+    // Chargement de l'URL
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !playingUrl) return;
 
     isReadyRef.current = false;
-    audio.src = playingUrl; // On injecte directement la source
+    audio.src = playingUrl;
     audio.load();
 
-    // Sur mobile, on force la lecture immédiatement pour ne pas perdre l'autorisation du clic
     if (status === "playing") {
-      audio.play().catch(e => console.warn("Lecture bloquée par le navigateur:", e));
+      audio.play().catch(e => {
+        console.warn("Lecture bloquée par le navigateur:", e);
+        setPlaybackError(e?.message ?? String(e));
+      });
     }
   }, [playingUrl]);
 
-  // 2. Play / Pause
+  // Play / Pause
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
 
     if (status === "playing") {
-      audio.play().catch(console.warn);
+      audio.play().catch(e => {
+        console.warn(e);
+        setPlaybackError(e?.message ?? String(e));
+      });
     } else if (status === "paused") {
       audio.pause();
     }
-  }, [status]);
-
+    }, [status]);
+    
   // 3. Volume
   useEffect(() => {
     if (audioRef.current) {
@@ -137,7 +142,9 @@ export function Player() {
       }}
       onEnded={onEnded}
       onError={(e) => {
-        console.warn("Erreur Audio Mobile:", (e.target as HTMLAudioElement).error);
+        const err = (e.target as HTMLAudioElement).error;
+        console.warn("Erreur Audio Mobile:", err);
+        setPlaybackError(err?.message || `Erreur audio (code ${err?.code})`);
       }}
       style={{ position: "absolute", width: "1px", height: "1px", opacity: 0.01, pointerEvents: "none", bottom: 0 }}
     />
