@@ -1,91 +1,66 @@
 import YTDlpWrap from "yt-dlp-wrap";
-
 import { join } from "path";
-
-import { existsSync } from "fs";
-
+import { existsSync, mkdirSync } from "fs";
 import { NextResponse } from "next/server";
 
-
-
 export const runtime = "nodejs";
-
 export const maxDuration = 15;
 
-
+// CACHE RAM : Mémorise les recherches pour une réponse instantanée
+const searchCache = new Map<string, string>();
 
 async function getYtDlp(): Promise<YTDlpWrap> {
+  if (process.env.YTDLP_PATH) {
+    return new YTDlpWrap(process.env.YTDLP_PATH);
+  }
 
-  const binPath = join(process.cwd(), "bin", "yt-dlp");
+  const binDir = join(process.cwd(), "bin");
+  const exeName = process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp";
+  const localPath = join(binDir, exeName);
 
-  const binPathExe = join(process.cwd(), "bin", "yt-dlp.exe");
+  if (!existsSync(localPath)) {
+    if (!existsSync(binDir)) mkdirSync(binDir, { recursive: true });
+    await YTDlpWrap.downloadFromGithub(localPath);
+  }
 
-  const path = existsSync(binPathExe) ? binPathExe : existsSync(binPath) ? binPath : null;
-
-  if (path) return new YTDlpWrap(path);
-
-  const downloadPath = process.platform === "win32" ? binPathExe : binPath;
-
-  await YTDlpWrap.downloadFromGithub(downloadPath);
-
-  return new YTDlpWrap(downloadPath);
-
+  return new YTDlpWrap(localPath);
 }
 
-
-
 export async function GET(req: Request) {
-
   try {
-
     const { searchParams } = new URL(req.url);
-
     const q = searchParams.get("q");
-
     if (!q) return NextResponse.json({ error: "Recherche vide" }, { status: 400 });
 
-
-
-    const ytDlp = await getYtDlp();
-
-
-
-    // Recherche YouTube via yt-dlp
-
-    const result = await ytDlp.execPromise([
-
-      `ytsearch1:${q}`,              // Cherche le 1er résultat
-
-      "--get-id",                     // Retourne juste l'ID
-
-      "--no-playlist",
-
-      "--default-search", "ytsearch",
-
-    ]);
-
-
-
-    const videoId = result.trim();
-
-    if (!videoId || videoId.length !== 11) {
-
-      return NextResponse.json({ error: "Aucun résultat" }, { status: 404 });
-
+    // Si on a déjà cherché cette musique, on répond en 0 seconde
+    if (searchCache.has(q)) {
+      return NextResponse.json({ videoId: searchCache.get(q) });
     }
 
+    const ytDlp = await getYtDlp();
+    
+    const ytArgs = [
+      `ytsearch1:${q}`,
+      "--print", "id",
+      "--flat-playlist",
+      "--no-playlist",
+      "--no-warnings",
+      "--no-check-certificates"
+    ];
 
+    const result = await ytDlp.execPromise(ytArgs);
+    const videoId = result.trim().split("\n")[0];
+
+    if (!videoId || videoId.length !== 11) {
+      return NextResponse.json({ error: "Aucun résultat" }, { status: 404 });
+    }
+
+    // On sauvegarde le résultat dans la mémoire RAM du serveur
+    searchCache.set(q, videoId);
 
     return NextResponse.json({ videoId });
 
-
-
   } catch (e: any) {
-
-    console.error("[youtube] Erreur yt-dlp:", e.message);
-
     return NextResponse.json({ error: e.message }, { status: 500 });
-
   }
-
 }

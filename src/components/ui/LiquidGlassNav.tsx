@@ -104,6 +104,9 @@ export function LiquidGlassNav() {
   const [isDragging,     setIsDragging]     = useState(false);
   const [optimisticIdx,  setOptimisticIdx]  = useState<number | null>(null);
   const [isVisible,      setIsVisible]      = useState(true);
+  
+  // 🟢 NOUVEAU : Détecteur de clavier
+  const [isKeyboardOpen, setIsKeyboardOpen] = useState(false);
 
   const [containerW, setContainerW] = useState(400);
   const dragX       = useMotionValue(0);
@@ -130,23 +133,21 @@ export function LiquidGlassNav() {
     return () => observer.disconnect();
   }, []);
 
+  // 🟢 CORRECTION DU COMPORTEMENT DU CLAVIER
   useEffect(() => {
     const vv = window?.visualViewport;
     if (!vv) return;
     
-    const updateKeyboardHeight = () => {
-      const offsetBottom = window.innerHeight - (vv.offsetTop + vv.height);
-      document.documentElement.style.setProperty('--keyboard-height', `${Math.max(0, offsetBottom)}px`);
+    const handleResize = () => {
+      // Si l'écran visible perd plus de 150px d'un coup, c'est le clavier qui vient de sortir
+      const isKeyboardActive = window.innerHeight - vv.height > 150;
+      setIsKeyboardOpen(isKeyboardActive);
     };
 
-    vv.addEventListener("resize", updateKeyboardHeight);
-    vv.addEventListener("scroll", updateKeyboardHeight);
-    updateKeyboardHeight();
+    vv.addEventListener("resize", handleResize);
+    handleResize(); // Init immédiate
     
-    return () => {
-      vv.removeEventListener("resize", updateKeyboardHeight);
-      vv.removeEventListener("scroll", updateKeyboardHeight);
-    };
+    return () => vv.removeEventListener("resize", handleResize);
   }, []);
 
   useEffect(() => {
@@ -298,17 +299,18 @@ export function LiquidGlassNav() {
 
   return (
     <AnimatePresence>
-      {isVisible && (
+      {/* 🟢 Si la barre est visible ET que le clavier est fermé, on l'affiche */}
+      {isVisible && !isKeyboardOpen && (
         <motion.nav
           initial={{ y: 120, opacity: 0 }}
           animate={{ y: 0,   opacity: 1 }}
           exit={{    y: 120, opacity: 0 }}
           transition={{ type: "spring", stiffness: 370, damping: 32 }}
           className="fixed left-1/2 -translate-x-1/2 w-[92%] max-w-md z-[100] select-none"
-          // 🟢 LA CORRECTION EST ICI : on ajoute env(safe-area-inset-bottom)
           style={{ 
-            bottom: "calc(16px + env(safe-area-inset-bottom) + var(--keyboard-height, 0px))",
-            transition: "bottom 0.15s ease-out" 
+            // 🟢 CORRECTION DE L'ESPACEMENT POUR iPHONE : 
+            // Ajoute automatiquement la marge du "Home Indicator" sans jamais déborder
+            bottom: "calc(16px + env(safe-area-inset-bottom, 0px))"
           }}
         >
           <div
