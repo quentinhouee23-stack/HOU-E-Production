@@ -1,87 +1,55 @@
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const videoId = searchParams.get("videoId");
   if (!videoId) return new Response("Missing videoId", { status: 400 });
 
-  try {
-    // Liste de serveurs miroirs "Piped" (ils bypassent YouTube à notre place)
-    const instances = [
-      "https://pipedapi.kavin.rocks",
-      "https://pipedapi.drgns.space",
-      "https://pipedapi.r4fo.com",
-      "https://piped-api.lunar.icu"
-    ];
+  // Les meilleures instances Invidious mondiales (très stables)
+  const instances = [
+    "https://inv.tux.pizza",
+    "https://invidious.nerdvpn.de",
+    "https://invidious.flokinet.to",
+    "https://vid.puffyan.us",
+    "https://invidious.privacyredirect.com"
+  ];
 
-    let audioUrl = "";
+  for (const instance of instances) {
+    try {
+      console.log(`[stream] Test rapide de : ${instance}`);
+      
+      // Test ultra-rapide (1.5 secondes max) pour voir si l'instance est vivante
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 1500);
+      
+      // On demande juste le titre pour vérifier que le serveur n'est pas bloqué
+      const res = await fetch(`${instance}/api/v1/videos/${videoId}?fields=title`, {
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
 
-    // On interroge les miroirs un par un jusqu'à ce qu'un serveur nous donne la musique
-    for (const instance of instances) {
-      try {
-        console.log(`[stream] Demande au miroir : ${instance}...`);
+      if (res.ok) {
+        console.log(`[stream] VICTOIRE ! Redirection de l'iPhone vers : ${instance}`);
         
-        const res = await fetch(`${instance}/streams/${videoId}`, {
-          headers: { "Accept": "application/json" }
+        // itag=140 : Format audio natif d'Apple (m4a)
+        // local=true : Force l'instance Invidious à masquer ton IP à YouTube
+        const streamUrl = `${instance}/latest_version?id=${videoId}&itag=140&local=true`;
+        
+        // On redirige l'iPhone pour qu'il gère le streaming tout seul (magique pour iOS)
+        return NextResponse.redirect(streamUrl, {
+          status: 302,
+          headers: {
+            "Cache-Control": "no-store, max-age=0"
+          }
         });
-        
-        if (!res.ok) continue;
-        const data = await res.json();
-        
-        // On cherche un format MP4 (crucial pour que ça marche sur ton iPhone !)
-        const stream = data.audioStreams?.find((s: any) => 
-          s.mimeType.includes("mp4") || s.mimeType.includes("m4a")
-        ) || data.audioStreams?.[0]; 
-        
-        if (stream && stream.url) {
-          audioUrl = stream.url;
-          console.log(`[stream] Succès ! Musique trouvée sur ${instance}`);
-          break;
-        }
-      } catch (e) {
-        console.warn(`[stream] Échec sur ${instance}`);
       }
+    } catch (e) {
+      console.log(`[stream] Échec ou serveur trop lent : ${instance}`);
     }
-
-    if (!audioUrl) {
-      return new Response("Impossible de trouver le flux audio sur les serveurs miroirs.", { status: 404 });
-    }
-
-    // On récupère la musique depuis le miroir et on l'envoie à ton iPhone
-    const rangeHeader = req.headers.get("range");
-
-    const upstream = await fetch(audioUrl, {
-      headers: {
-        ...(rangeHeader ? { Range: rangeHeader } : {}),
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-      },
-    });
-
-    const responseHeaders = new Headers({
-      "Content-Type": "audio/mp4",
-      "Accept-Ranges": "bytes",
-      "Access-Control-Allow-Origin": "*",
-      "Cache-Control": "no-store",
-    });
-
-    const contentLength = upstream.headers.get("Content-Length");
-    const contentRange = upstream.headers.get("Content-Range");
-    const contentType = upstream.headers.get("Content-Type");
-    
-    if (contentLength) responseHeaders.set("Content-Length", contentLength);
-    if (contentRange) responseHeaders.set("Content-Range", contentRange);
-    if (contentType) responseHeaders.set("Content-Type", contentType);
-
-    return new Response(upstream.body, {
-      status: upstream.status,
-      headers: responseHeaders,
-    });
-
-  } catch (e: any) {
-    console.error("[stream] Erreur brute:", e?.message || e);
-    return new Response(`Erreur: ${e?.message || "inconnue"}`, { status: 500 });
   }
+
+  return new Response("Tous les serveurs relais sont inaccessibles, réessaie.", { status: 500 });
 }
