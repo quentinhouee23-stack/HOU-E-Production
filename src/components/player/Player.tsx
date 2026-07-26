@@ -13,8 +13,36 @@ export function Player() {
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const [isClient, setIsClient] = useState(false);
+  const hasUnlockedRef = useRef(false);
 
   useEffect(() => setIsClient(true), []);
+
+  // Débloque l'élément <audio> au premier tap/clic : nécessaire sur mobile
+  // car ton vrai play() arrive plus tard, après un fetch async (donc plus
+  // "attaché" au geste utilisateur aux yeux du navigateur). Un play/pause
+  // silencieux ici, lui, est bien dans la pile du geste, et ça suffit à
+  // autoriser tous les play() programmatiques suivants pour cet élément.
+  useEffect(() => {
+    const unlock = () => {
+      const audio = audioRef.current;
+      if (audio && !hasUnlockedRef.current) {
+        audio.muted = true;
+        audio.play().then(() => {
+          audio.pause();
+          audio.muted = false;
+          hasUnlockedRef.current = true;
+        }).catch(() => {});
+      }
+      document.removeEventListener("touchstart", unlock);
+      document.removeEventListener("click", unlock);
+    };
+    document.addEventListener("touchstart", unlock, { once: true });
+    document.addEventListener("click", unlock, { once: true });
+    return () => {
+      document.removeEventListener("touchstart", unlock);
+      document.removeEventListener("click", unlock);
+    };
+  }, []);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -25,6 +53,7 @@ export function Player() {
 
     if (status === "playing") {
       audio.play().catch((e) => {
+        console.warn("play() bloqué:", e);
         setPlaybackError(e?.message ?? "Erreur de lecture");
       });
     }
@@ -35,7 +64,10 @@ export function Player() {
     if (!audio) return;
 
     if (status === "playing") {
-      audio.play().catch((e) => console.warn(e));
+      audio.play().catch((e) => {
+        console.warn(e);
+        setPlaybackError(e?.message ?? "Erreur de lecture");
+      });
     } else if (status === "paused") {
       audio.pause();
     }
@@ -59,6 +91,8 @@ export function Player() {
   return (
     <audio
       ref={audioRef}
+      playsInline
+      preload="auto"
       onTimeUpdate={() =>
         onProgress({ playedSeconds: audioRef.current?.currentTime ?? 0 })
       }
@@ -67,6 +101,11 @@ export function Player() {
         if (d && isFinite(d)) onDuration(d);
       }}
       onEnded={onEnded}
+      onError={(e) => {
+        const err = (e.target as HTMLAudioElement).error;
+        console.warn("Erreur Audio:", err);
+        setPlaybackError(err?.message || `Erreur audio (code ${err?.code})`);
+      }}
       style={{ display: "none" }}
     />
   );
