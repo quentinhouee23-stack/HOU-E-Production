@@ -29,11 +29,11 @@ export async function GET(req: Request) {
 
     const ytDlp = await getYtDlp();
 
-    // La vraie magie est ici : --extract-flat empêche yt-dlp de déclencher le bot-check
+    // La vraie magie est ici : --flat-playlist (et non --extract-flat)
     const ytArgs = [
       `ytsearch1:${q}`,
       "--print", "id", // Récupère uniquement l'ID proprement
-      "--extract-flat", // LE PARAMÈTRE ANTI-BLOCAGE
+      "--flat-playlist", // LE VRAI PARAMÈTRE ANTI-BLOCAGE
       "--no-playlist"
     ];
 
