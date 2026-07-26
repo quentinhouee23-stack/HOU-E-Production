@@ -1,27 +1,7 @@
-import YTDlpWrap from "yt-dlp-wrap";
-import { join } from "path";
-import { existsSync, mkdirSync } from "fs";
+import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
-
-async function getYtDlp(): Promise<YTDlpWrap> {
-  if (process.env.RENDER || process.env.NODE_ENV === "production") {
-    return new YTDlpWrap(process.env.YTDLP_PATH || "/usr/local/bin/yt-dlp");
-  }
-
-  const binDir = join(process.cwd(), "bin");
-  const exeName = process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp";
-  const localPath = join(binDir, exeName);
-
-  if (!existsSync(localPath)) {
-    if (!existsSync(binDir)) mkdirSync(binDir, { recursive: true });
-    console.log("Téléchargement de yt-dlp...");
-    await YTDlpWrap.downloadFromGithub(localPath);
-  }
-
-  return new YTDlpWrap(localPath);
-}
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -29,52 +9,56 @@ export async function GET(req: Request) {
   if (!videoId) return new Response("Missing videoId", { status: 400 });
 
   try {
-    const ytDlp = await getYtDlp();
-    const url = `https://www.youtube.com/watch?v=${videoId}`;
-    
-    // Le chemin des cookies est ENFIN le bon
-    let cookiesPath = join(process.cwd(), "cookies.txt");
-    if (!existsSync(cookiesPath)) cookiesPath = "/app/cookies.txt";
-
-    // RETOUR SUR ANDROID : Le seul client mobile qui accepte les cookies de sécurité !
-    const ytArgs = [
-      url,
-      "-f", "bestaudio[ext=m4a]/bestaudio",
-      "--no-playlist",
-      "-j", 
-      "--js-runtimes", "node",
-      "--extractor-args", "youtube:client=android", 
+    // Liste de serveurs miroirs "Piped" (ils bypassent YouTube à notre place)
+    const instances = [
+      "https://pipedapi.kavin.rocks",
+      "https://pipedapi.drgns.space",
+      "https://pipedapi.r4fo.com",
+      "https://piped-api.lunar.icu"
     ];
 
-    // On injecte les cookies pour prouver à YouTube qu'on n'est pas un robot
-    if (existsSync(cookiesPath)) {
-      ytArgs.push("--cookies", cookiesPath);
-      console.log("[stream] Cookies trouvés et activés avec Android !");
+    let audioUrl = "";
+
+    // On interroge les miroirs un par un jusqu'à ce qu'un serveur nous donne la musique
+    for (const instance of instances) {
+      try {
+        console.log(`[stream] Demande au miroir : ${instance}...`);
+        
+        const res = await fetch(`${instance}/streams/${videoId}`, {
+          headers: { "Accept": "application/json" }
+        });
+        
+        if (!res.ok) continue;
+        const data = await res.json();
+        
+        // On cherche un format MP4 (crucial pour que ça marche sur ton iPhone !)
+        const stream = data.audioStreams?.find((s: any) => 
+          s.mimeType.includes("mp4") || s.mimeType.includes("m4a")
+        ) || data.audioStreams?.[0]; 
+        
+        if (stream && stream.url) {
+          audioUrl = stream.url;
+          console.log(`[stream] Succès ! Musique trouvée sur ${instance}`);
+          break;
+        }
+      } catch (e) {
+        console.warn(`[stream] Échec sur ${instance}`);
+      }
     }
 
-    const rawOutput = await ytDlp.execPromise(ytArgs);
-    const info = JSON.parse(rawOutput.trim().split("\n").pop()!);
-
-    const chosen = info?.requested_downloads?.[0] ?? info;
-    const audioUrl: string | undefined = chosen?.url;
-    const ytHeaders: Record<string, string> = chosen?.http_headers || info?.http_headers || {};
-
-    if (!audioUrl?.startsWith("http")) {
-      return new Response("URL audio introuvable", { status: 404 });
+    if (!audioUrl) {
+      return new Response("Impossible de trouver le flux audio sur les serveurs miroirs.", { status: 404 });
     }
 
+    // On récupère la musique depuis le miroir et on l'envoie à ton iPhone
     const rangeHeader = req.headers.get("range");
 
     const upstream = await fetch(audioUrl, {
       headers: {
-        ...ytHeaders,
         ...(rangeHeader ? { Range: rangeHeader } : {}),
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
       },
     });
-
-    if (!upstream.ok && upstream.status !== 206) {
-      return new Response(`Upstream ${upstream.status}`, { status: upstream.status });
-    }
 
     const responseHeaders = new Headers({
       "Content-Type": "audio/mp4",
