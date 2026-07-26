@@ -32,25 +32,24 @@ export async function GET(req: Request) {
     const ytDlp = await getYtDlp();
     const url = `https://www.youtube.com/watch?v=${videoId}`;
     
-    // On sécurise la recherche des cookies (Next.js a tendance à les perdre en route)
+    // Le chemin des cookies est ENFIN le bon
     let cookiesPath = join(process.cwd(), "cookies.txt");
     if (!existsSync(cookiesPath)) cookiesPath = "/app/cookies.txt";
 
-    // ASTUCE ANTI-429 : On passe sur iOS au lieu d'Android
+    // RETOUR SUR ANDROID : Le seul client mobile qui accepte les cookies de sécurité !
     const ytArgs = [
       url,
       "-f", "bestaudio[ext=m4a]/bestaudio",
       "--no-playlist",
       "-j", 
       "--js-runtimes", "node",
-      "--extractor-args", "youtube:player_client=ios", 
+      "--extractor-args", "youtube:client=android", 
     ];
 
+    // On injecte les cookies pour prouver à YouTube qu'on n'est pas un robot
     if (existsSync(cookiesPath)) {
       ytArgs.push("--cookies", cookiesPath);
-      console.log("[stream] Cookies trouvés et activés !");
-    } else {
-      console.log("[stream] ATTENTION : Cookies introuvables au chemin", cookiesPath);
+      console.log("[stream] Cookies trouvés et activés avec Android !");
     }
 
     const rawOutput = await ytDlp.execPromise(ytArgs);
@@ -61,7 +60,6 @@ export async function GET(req: Request) {
     const ytHeaders: Record<string, string> = chosen?.http_headers || info?.http_headers || {};
 
     if (!audioUrl?.startsWith("http")) {
-      console.error("[stream] Pas d'URL dans la sortie yt-dlp");
       return new Response("URL audio introuvable", { status: 404 });
     }
 
@@ -75,8 +73,6 @@ export async function GET(req: Request) {
     });
 
     if (!upstream.ok && upstream.status !== 206) {
-      const bodyText = await upstream.text().catch(() => "");
-      console.error("[stream] Upstream a refusé:", upstream.status, bodyText.slice(0, 300));
       return new Response(`Upstream ${upstream.status}`, { status: upstream.status });
     }
 
