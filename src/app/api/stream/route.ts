@@ -6,8 +6,12 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 async function getYtDlp(): Promise<YTDlpWrap> {
-  const isProd = process.env.NODE_ENV === "production" || !!process.env.RENDER;
-  const binDir = isProd ? "/tmp/yt-bin" : join(process.cwd(), "bin");
+  // Retour à la version stable de ton serveur
+  if (process.env.RENDER || process.env.NODE_ENV === "production") {
+    return new YTDlpWrap(process.env.YTDLP_PATH || "/usr/local/bin/yt-dlp");
+  }
+
+  const binDir = join(process.cwd(), "bin");
   const exeName = process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp";
   const localPath = join(binDir, exeName);
 
@@ -28,8 +32,8 @@ export async function GET(req: Request) {
   try {
     const ytDlp = await getYtDlp();
     const url = `https://www.youtube.com/watch?v=${videoId}`;
-    const cookiesPath = join(process.cwd(), "cookies.txt");
 
+    // Code de Claude pour l'audio (parfait pour le fond et l'iPhone)
     const ytArgs = [
       url,
       "-f", "bestaudio[ext=m4a]/bestaudio",
@@ -38,10 +42,6 @@ export async function GET(req: Request) {
       "--js-runtimes", "node",
       "--extractor-args", "youtube:player_client=android",
     ];
-
-    if (existsSync(cookiesPath)) {
-      ytArgs.push("--cookies", cookiesPath);
-    }
 
     const rawOutput = await ytDlp.execPromise(ytArgs);
     const info = JSON.parse(rawOutput.trim().split("\n").pop()!);
