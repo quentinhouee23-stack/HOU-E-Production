@@ -3,7 +3,7 @@ import { join } from "path";
 import { existsSync, mkdirSync } from "fs";
 
 export const runtime = "nodejs";
-export const maxDuration = 60; // sans effet sur Render (spécifique Vercel), mais inoffensif
+export const maxDuration = 60;
 
 async function getYtDlp(): Promise<YTDlpWrap> {
   const isProd = process.env.NODE_ENV === "production" || !!process.env.RENDER;
@@ -34,7 +34,7 @@ export async function GET(req: Request) {
       url,
       "-f", "bestaudio[ext=m4a]/bestaudio",
       "--no-playlist",
-      "-j", // dump-json : donne l'URL + les http_headers exacts liés au client
+      "-j", 
       "--js-runtimes", "node",
       "--extractor-args", "youtube:player_client=android",
     ];
@@ -51,15 +51,12 @@ export async function GET(req: Request) {
     const ytHeaders: Record<string, string> = chosen?.http_headers || info?.http_headers || {};
 
     if (!audioUrl?.startsWith("http")) {
-      console.error("[stream] Pas d'URL dans la sortie yt-dlp:", rawOutput.slice(0, 500));
+      console.error("[stream] Pas d'URL dans la sortie yt-dlp");
       return new Response("URL audio introuvable", { status: 404 });
     }
 
     const rangeHeader = req.headers.get("range");
 
-    // On réutilise EXACTEMENT les headers que yt-dlp a validés pour ce client.
-    // Ne PAS ajouter de Referer/Origin "browser-like" ici : c'est la cause
-    // la plus fréquente des 403 en prod avec extractor-args client=android.
     const upstream = await fetch(audioUrl, {
       headers: {
         ...ytHeaders,
@@ -83,6 +80,7 @@ export async function GET(req: Request) {
     const contentLength = upstream.headers.get("Content-Length");
     const contentRange = upstream.headers.get("Content-Range");
     const contentType = upstream.headers.get("Content-Type");
+    
     if (contentLength) responseHeaders.set("Content-Length", contentLength);
     if (contentRange) responseHeaders.set("Content-Range", contentRange);
     if (contentType) responseHeaders.set("Content-Type", contentType);

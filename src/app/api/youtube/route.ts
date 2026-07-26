@@ -7,7 +7,6 @@ export const runtime = "nodejs";
 export const maxDuration = 15;
 
 async function getYtDlp(): Promise<YTDlpWrap> {
-  // On ignore la version périmée de Render et on télécharge la dernière mise à jour dans /tmp
   const isProd = process.env.NODE_ENV === "production" || !!process.env.RENDER;
   const binDir = isProd ? "/tmp/yt-bin" : join(process.cwd(), "bin");
   const exeName = process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp";
@@ -29,26 +28,20 @@ export async function GET(req: Request) {
     if (!q) return NextResponse.json({ error: "Recherche vide" }, { status: 400 });
 
     const ytDlp = await getYtDlp();
-    const cookiesPath = join(process.cwd(), "cookies.txt");
 
-    // L'armure complète : recherche + node JS + Android
+    // La vraie magie est ici : --extract-flat empêche yt-dlp de déclencher le bot-check
     const ytArgs = [
       `ytsearch1:${q}`,
-      "--get-id",
-      "--no-playlist",
-      "--default-search", "ytsearch",
-      "--js-runtimes", "node",
-      "--extractor-args", "youtube:player_client=android",
+      "--print", "id", // Récupère uniquement l'ID proprement
+      "--extract-flat", // LE PARAMÈTRE ANTI-BLOCAGE
+      "--no-playlist"
     ];
 
-    // On ajoute tes cookies s'ils sont là
-    if (existsSync(cookiesPath)) {
-      ytArgs.push("--cookies", cookiesPath);
-    }
-
     const result = await ytDlp.execPromise(ytArgs);
+    
+    // On s'assure de ne garder que la première ligne (l'ID) sans espaces
+    const videoId = result.trim().split("\n")[0]; 
 
-    const videoId = result.trim();
     if (!videoId || videoId.length !== 11) {
       return NextResponse.json({ error: "Aucun résultat" }, { status: 404 });
     }
