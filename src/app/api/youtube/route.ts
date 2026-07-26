@@ -9,6 +9,8 @@ export const maxDuration = 15;
 // CACHE RAM : Mémorise les recherches pour une réponse instantanée
 const searchCache = new Map<string, string>();
 
+
+
 async function getYtDlp(): Promise<YTDlpWrap> {
   if (process.env.YTDLP_PATH) {
     return new YTDlpWrap(process.env.YTDLP_PATH);
@@ -39,14 +41,21 @@ export async function GET(req: Request) {
 
     const ytDlp = await getYtDlp();
     
-    const ytArgs = [
-      `ytsearch1:${q}`,
-      "--print", "id",
-      "--flat-playlist",
-      "--no-playlist",
-      "--no-warnings",
-      "--no-check-certificates"
-    ];
+    const COOKIES_PATH = "/etc/secrets/cookies.txt";
+
+  // dans la fonction GET, avant execPromise :
+  const ytArgs = [
+    `ytsearch1:${q}`,
+    "--print", "id",
+    "--flat-playlist",
+    "--no-playlist",
+    "--no-warnings",
+    "--no-check-certificates",
+  ];
+
+  if (existsSync(COOKIES_PATH)) {
+    ytArgs.push("--cookies", COOKIES_PATH);
+  }
 
     const result = await ytDlp.execPromise(ytArgs);
     const videoId = result.trim().split("\n")[0];
@@ -63,4 +72,5 @@ export async function GET(req: Request) {
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
+  
 }

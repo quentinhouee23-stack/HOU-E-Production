@@ -5,6 +5,8 @@ import { existsSync, mkdirSync } from "fs";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+const COOKIES_PATH = "/etc/secrets/cookies.txt";
+
 async function getYtDlp(): Promise<YTDlpWrap> {
   if (process.env.YTDLP_PATH) {
     return new YTDlpWrap(process.env.YTDLP_PATH);
@@ -28,9 +30,6 @@ export async function GET(req: Request) {
     const ytDlp = await getYtDlp();
     const url = `https://www.youtube.com/watch?v=${videoId}`;
 
-    // 140 = itag AAC/m4a natif iOS/Safari. On garde des fallbacks m4a
-    // uniquement, JAMAIS de bestaudio seul (peut renvoyer du webm/opus
-    // que Safari ne lit pas du tout, quel que soit le Content-Type).
     const ytArgs = [
       url,
       "--get-url",
@@ -40,11 +39,17 @@ export async function GET(req: Request) {
       "--no-check-certificates",
     ];
 
+    if (existsSync(COOKIES_PATH)) {
+      ytArgs.push("--cookies", COOKIES_PATH);
+    } else {
+      console.warn("[stream] cookies.txt introuvable — YouTube va probablement bloquer");
+    }
+
     const rawOutput = await ytDlp.execPromise(ytArgs);
     const audioUrl = rawOutput.trim().split("\n")[0];
 
     if (!audioUrl?.startsWith("http")) {
-      return new Response("URL audio introuvable (pas de piste m4a dispo)", { status: 404 });
+      return new Response("URL audio introuvable", { status: 404 });
     }
 
     const rangeHeader = req.headers.get("range");
@@ -55,8 +60,6 @@ export async function GET(req: Request) {
       },
     });
 
-    // audio/mp4 est le bon type pour un flux m4a/AAC (pas audio/mpeg,
-    // réservé au vrai MP3 — le mismatch fait planter Safari).
     const responseHeaders = new Headers({
       "Content-Type": "audio/mp4",
       "Accept-Ranges": "bytes",
