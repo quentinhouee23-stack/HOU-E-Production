@@ -7,19 +7,16 @@ export const runtime = "nodejs";
 export const maxDuration = 15;
 
 async function getYtDlp(): Promise<YTDlpWrap> {
-  // 1. On annule le téléchargement foireux et on reprend la version stable de ton serveur Render
   if (process.env.RENDER || process.env.NODE_ENV === "production") {
     return new YTDlpWrap(process.env.YTDLP_PATH || "/usr/local/bin/yt-dlp");
   }
 
-  // 2. Sur ton PC, ça continue de marcher normalement
   const binDir = join(process.cwd(), "bin");
   const exeName = process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp";
   const localPath = join(binDir, exeName);
 
   if (!existsSync(localPath)) {
     if (!existsSync(binDir)) mkdirSync(binDir, { recursive: true });
-    console.log("Téléchargement local de yt-dlp...");
     await YTDlpWrap.downloadFromGithub(localPath);
   }
 
@@ -37,7 +34,7 @@ export async function GET(req: Request) {
     const ytArgs = [
       `ytsearch1:${q}`,
       "--print", "id",
-      "--flat-playlist", // Contourne le blocage de la recherche
+      "--flat-playlist",
       "--no-playlist"
     ];
 
@@ -49,9 +46,8 @@ export async function GET(req: Request) {
     }
 
     return NextResponse.json({ videoId });
-
   } catch (e: any) {
-    console.error("[youtube] Erreur yt-dlp:", e?.message || e);
-    return NextResponse.json({ error: e?.message || "Erreur inconnue" }, { status: 500 });
+    console.error("[youtube] Erreur:", e?.message);
+    return NextResponse.json({ error: e?.message }, { status: 500 });
   }
 }
