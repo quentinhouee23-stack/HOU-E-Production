@@ -40,9 +40,21 @@ function getCookiesArgs(): string[] {
   if (process.env.YTDLP_COOKIES_PATH && existsSync(process.env.YTDLP_COOKIES_PATH)) {
     return ["--cookies", process.env.YTDLP_COOKIES_PATH];
   }
-  if (existsSync("/etc/secrets/cookies.txt")) {
-    return ["--cookies", "/etc/secrets/cookies.txt"];
+
+  // Vérifie si le fichier cookies.txt est à la racine du projet
+  const rootCookies = join(process.cwd(), "cookies.txt");
+  if (existsSync(rootCookies)) {
+    // Sur Linux / Vercel, on le copie dans /tmp pour être sûr des accès
+    if (process.platform !== "win32") {
+      const tmpCookies = "/tmp/cookies.txt";
+      if (!existsSync(tmpCookies)) {
+        copyFileSync(rootCookies, tmpCookies);
+      }
+      return ["--cookies", tmpCookies];
+    }
+    return ["--cookies", rootCookies];
   }
+
   return [];
 }
 
