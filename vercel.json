@@ -1,7 +1,3 @@
 {
-    "functions": {
-      "src/app/api/youtube/route.ts": {
-        "includeFiles": "bin/**,cookies.txt"
-      }
-    }
+    "framework": "nextjs"
   }
