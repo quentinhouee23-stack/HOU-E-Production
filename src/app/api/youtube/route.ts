@@ -1,6 +1,6 @@
 import YTDlpWrap from "yt-dlp-wrap";
 import { join } from "path";
-import { existsSync, mkdirSync } from "fs";
+import { existsSync, copyFileSync, chmodSync } from "fs";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -12,13 +12,28 @@ async function getYtDlp(): Promise<YTDlpWrap> {
   if (process.env.YTDLP_PATH) {
     return new YTDlpWrap(process.env.YTDLP_PATH);
   }
-  const binDir = join(process.cwd(), "bin");
-  const exeName = process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp";
-  const exePath = join(binDir, exeName);
-  if (!existsSync(exePath)) {
-    throw new Error("yt-dlp binaire introuvable: " + exePath);
+
+  // Sous Windows en local
+  if (process.platform === "win32") {
+    const localExe = join(process.cwd(), "bin", "yt-dlp.exe");
+    if (!existsSync(localExe)) {
+      throw new Error("yt-dlp binaire introuvable: " + localExe);
+    }
+    return new YTDlpWrap(localExe);
   }
-  return new YTDlpWrap(exePath);
+
+  // Sous Linux / Vercel : copie vers /tmp et ajout des droits d'exécution
+  const targetPath = "/tmp/yt-dlp";
+  if (!existsSync(targetPath)) {
+    const sourcePath = join(process.cwd(), "bin", "yt-dlp");
+    if (!existsSync(sourcePath)) {
+      throw new Error("yt-dlp binaire source introuvable: " + sourcePath);
+    }
+    copyFileSync(sourcePath, targetPath);
+    chmodSync(targetPath, 0o755);
+  }
+
+  return new YTDlpWrap(targetPath);
 }
 
 function getCookiesArgs(): string[] {
