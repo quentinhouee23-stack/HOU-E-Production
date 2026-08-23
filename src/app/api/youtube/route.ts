@@ -95,7 +95,7 @@ export async function GET(request: Request) {
       searchCache.set(q, videoId);
       return NextResponse.json({ videoId });
     } catch (e: any) {
-      console.error(`[youtube] client=${client} message:`, e.message);
+      console.error(`[youtube] client=${client} stderr:`, e.stderr || e.stdout || e.message);
       lastError = e;
       continue;
     }
