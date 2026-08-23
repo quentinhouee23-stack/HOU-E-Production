@@ -66,7 +66,7 @@ export async function GET(request: Request) {
         `--extractor-args`, `youtube:player_client=${client}`,
         ...cookiesArgs,
         `--print`, "id",
-        `--playlist-items", "1",
+        `--playlist-items`, "1",
         `ytsearch1:${q}`,
       ];
 
