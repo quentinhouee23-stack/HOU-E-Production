@@ -1,4 +1,3 @@
-import ytSearch from "yt-search";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -19,21 +18,29 @@ export async function GET(request: Request) {
   }
 
   try {
-    const searchResults = await ytSearch(q);
-    const videos = searchResults.videos;
+    const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`;
+    const res = await fetch(searchUrl, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
+      },
+    });
 
-    if (!videos || videos.length === 0) {
+    const html = await res.text();
+    const match = html.match(/"videoId":"([a-zA-Z0-9_-]{11})"/);
+
+    if (!match || !match[1]) {
       return NextResponse.json({ error: "Aucun résultat trouvé" }, { status: 404 });
     }
 
-    const videoId = videos[0].videoId;
+    const videoId = match[1];
     searchCache.set(q, videoId);
 
     return NextResponse.json({ videoId });
   } catch (error: any) {
     console.error("[youtube-search-error]:", error);
     return NextResponse.json(
-      { error: `Erreur lors de la recherche: ${error.message || "inconnue"}` },
+      { error: `Erreur recherche: ${error.message || "inconnue"}` },
       { status: 500 }
     );
   }
