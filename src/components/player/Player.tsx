@@ -23,10 +23,10 @@ export function Player() {
   const containerRef = useRef<HTMLDivElement>(null);
   const progressIntervalRef = useRef<any>(null);
   const isReadyRef = useRef(false);
+  const currentVideoIdRef = useRef<string | null>(null);
 
   useEffect(() => setIsClient(true), []);
 
-  // Extraction du videoId (supporte ID direct, URL YouTube, ou paramètre ?videoId=)
   const getVideoId = (input: string | null): string | null => {
     if (!input) return null;
     if (input.length === 11 && !input.includes("/") && !input.includes("?")) {
@@ -38,10 +38,10 @@ export function Player() {
       if (paramId) return paramId;
     } catch {}
     const match = input.match(/(?:youtu\.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/);
-    return match && match[1].length === 11 ? match[1] : null;
+    return match && match[1]?.length === 11 ? match[1] : null;
   };
 
-  // Chargement du script YouTube Iframe API
+  // Chargement de l'API YouTube Iframe
   useEffect(() => {
     if (!isClient) return;
 
@@ -55,30 +55,35 @@ export function Player() {
     const initPlayer = () => {
       if (!containerRef.current || playerRef.current) return;
 
-      playerRef.current = new window.YT.Player(containerRef.current, {
-        height: "1",
-        width: "1",
+      playerRef.current = new window.YT.Player("youtube-hidden-player", {
+        height: "200",
+        width: "200",
         playerVars: {
-          autoplay: 0,
+          autoplay: 1,
           controls: 0,
           disablekb: 1,
           fs: 0,
-          playsinline: 1,
+          playsinline: 1, // Crucial pour iOS
+          enablejsapi: 1,
+          origin: typeof window !== "undefined" ? window.location.origin : "",
           rel: 0,
         },
         events: {
           onReady: () => {
             isReadyRef.current = true;
             if (playerRef.current?.setVolume) {
-              playerRef.current.setVolume(volume * 100);
+              playerRef.current.setVolume(Math.max(0, Math.min(100, volume * 100)));
+            }
+            if (currentVideoIdRef.current && status === "playing") {
+              playerRef.current.loadVideoById(currentVideoIdRef.current);
             }
           },
           onStateChange: (event: any) => {
-            // YT.PlayerState.ENDED === 0
+            // 0 = Ended
             if (event.data === 0) {
               onEnded();
             }
-            // YT.PlayerState.PLAYING === 1
+            // 1 = Playing
             if (event.data === 1) {
               const dur = playerRef.current.getDuration();
               if (dur && isFinite(dur)) {
@@ -87,8 +92,12 @@ export function Player() {
             }
           },
           onError: (event: any) => {
-            console.warn("Erreur lecteur YouTube:", event.data);
-            setPlaybackError(`Erreur lecture YouTube (code ${event.data})`);
+            console.warn("Erreur lecture YouTube:", event.data);
+            if (event.data === 150 || event.data === 101) {
+              setPlaybackError("Titre non autorisé à la lecture externe par YouTube");
+            } else {
+              setPlaybackError(`Erreur lecture (${event.data})`);
+            }
           },
         },
       });
@@ -105,7 +114,7 @@ export function Player() {
     };
   }, [isClient]);
 
-  // Suivi de progression du temps de lecture
+  // Suivi régulier de la progression
   useEffect(() => {
     if (status === "playing") {
       progressIntervalRef.current = setInterval(() => {
@@ -123,17 +132,20 @@ export function Player() {
     };
   }, [status, onProgress]);
 
-  // Chargement et lecture lors du changement de piste
+  // Chargement et déclenchement de la piste
   useEffect(() => {
     const videoId = getVideoId(playingUrl);
-    if (!videoId || !isReadyRef.current || !playerRef.current?.loadVideoById) return;
+    if (!videoId) return;
 
-    playerRef.current.loadVideoById(videoId);
+    currentVideoIdRef.current = videoId;
+
+    if (!isReadyRef.current || !playerRef.current?.loadVideoById) return;
 
     if (status === "playing") {
+      playerRef.current.loadVideoById({ videoId });
       playerRef.current.playVideo();
     } else {
-      playerRef.current.pauseVideo();
+      playerRef.current.cueVideoById({ videoId });
     }
   }, [playingUrl]);
 
@@ -148,14 +160,14 @@ export function Player() {
     }
   }, [status]);
 
-  // Gestion du volume (0 à 100 pour YouTube API)
+  // Gestion du volume
   useEffect(() => {
     if (isReadyRef.current && playerRef.current?.setVolume) {
-      playerRef.current.setVolume(Math.max(0, Math.min(1, volume)) * 100);
+      playerRef.current.setVolume(Math.max(0, Math.min(100, volume * 100)));
     }
   }, [volume]);
 
-  // Gestion de la barre de progression (seek)
+  // Progression (seek)
   useEffect(() => {
     if (seekRequest !== null && isReadyRef.current && playerRef.current?.seekTo) {
       playerRef.current.seekTo(seekRequest, true);
@@ -165,19 +177,21 @@ export function Player() {
 
   if (!isClient) return null;
 
+  // Iframe active mais invisible visuellement pour satisfaire le moteur WebKit iOS
   return (
     <div
       style={{
         position: "fixed",
-        top: -9999,
-        left: -9999,
+        bottom: 0,
+        right: 0,
         width: "1px",
         height: "1px",
-        opacity: 0,
+        opacity: 0.01,
         pointerEvents: "none",
+        zIndex: -1,
       }}
     >
-      <div ref={containerRef} />
+      <div id="youtube-hidden-player" ref={containerRef} />
     </div>
   );
 }
