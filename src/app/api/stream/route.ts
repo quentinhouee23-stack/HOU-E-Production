@@ -13,71 +13,103 @@ async function getYtDlp(): Promise<YTDlpWrap> {
   }
   const binDir = join(process.cwd(), "bin");
   const exeName = process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp";
-  const localPath = join(binDir, exeName);
-  if (!existsSync(localPath)) {
-    if (!existsSync(binDir)) mkdirSync(binDir, { recursive: true });
-    await YTDlpWrap.downloadFromGithub(localPath);
+  const exePath = join(binDir, exeName);
+  if (!existsSync(exePath)) {
+    throw new Error("yt-dlp binaire introuvable: " + exePath);
   }
-  return new YTDlpWrap(localPath);
+  return new YTDlpWrap(exePath);
 }
 
-export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url);
-  const videoId = searchParams.get("videoId");
-  if (!videoId) return new Response("Missing videoId", { status: 400 });
-
-  try {
-    const ytDlp = await getYtDlp();
-    const url = `https://www.youtube.com/watch?v=${videoId}`;
-
-    const ytArgs = [
-      url,
-      "--get-url",
-      "-f", "140/bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]",
-      "--no-playlist",
-      "--no-warnings",
-      "--no-check-certificates",
-    ];
-
-    if (existsSync(COOKIES_PATH)) {
-      ytArgs.push("--cookies", COOKIES_PATH);
-    } else {
-      console.warn("[stream] cookies.txt introuvable — YouTube va probablement bloquer");
-    }
-
-    const rawOutput = await ytDlp.execPromise(ytArgs);
-    const audioUrl = rawOutput.trim().split("\n")[0];
-
-    if (!audioUrl?.startsWith("http")) {
-      return new Response("URL audio introuvable", { status: 404 });
-    }
-
-    const rangeHeader = req.headers.get("range");
-    const upstream = await fetch(audioUrl, {
-      headers: {
-        ...(rangeHeader ? { Range: rangeHeader } : {}),
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-      },
-    });
-
-    const responseHeaders = new Headers({
-      "Content-Type": "audio/mp4",
-      "Accept-Ranges": "bytes",
-      "Access-Control-Allow-Origin": "*",
-      "Cache-Control": "no-store",
-    });
-
-    const contentLength = upstream.headers.get("Content-Length");
-    const contentRange = upstream.headers.get("Content-Range");
-    if (contentLength) responseHeaders.set("Content-Length", contentLength);
-    if (contentRange) responseHeaders.set("Content-Range", contentRange);
-
-    return new Response(upstream.body, {
-      status: upstream.status,
-      headers: responseHeaders,
-    });
-  } catch (e: any) {
-    console.error("[stream] message:", e.message, "stderr:", e.stderr);
-    return new Response(`Erreur: ${e.message}`, { status: 500 });
+function getCookiesArgs(): string[] {
+  if (process.env.YTDLP_COOKIES_PATH && existsSync(process.env.YTDLP_COOKIES_PATH)) {
+    return ["--cookies", process.env.YTDLP_COOKIES_PATH];
   }
+  if (existsSync(COOKIES_PATH)) {
+    return ["--cookies", COOKIES_PATH];
+  }
+  return [];
+}
+
+const CLIENT_FALLBACKS = [
+  "android_vr",
+  "tv_embedded",
+  "web_safari",
+];
+
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const videoId = searchParams.get("videoId");
+
+  if (!videoId) {
+    return new Response("Paramètre videoId manquant", { status: 400 });
+  }
+
+  const ytDlp = await getYtDlp();
+  const cookiesArgs = getCookiesArgs();
+
+  let lastError: any = null;
+
+  for (const client of CLIENT_FALLBACKS) {
+    try {
+      const ytArgs = [
+        `--format-sort-force`,
+        `--format-sort`, "res:360",
+        `-f`, "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best[height<=360]",
+        `--no-playlist`,
+        `--no-warnings`,
+        `--retries`, "2",
+        `--socket-timeout`, "15",
+        `--no-check-certificates`,
+        `--extractor-args`, `youtube:player_client=${client}`,
+        ...cookiesArgs,
+        `--get-url`,
+        `--`,
+        videoId,
+      ];
+
+      const result = await ytDlp.execPromise(ytArgs);
+      const streamUrl = result.trim().split("\n")[0];
+
+      if (!streamUrl || !streamUrl.startsWith("http")) {
+        throw new Error("URL de stream invalide");
+      }
+
+      const upstream = await fetch(streamUrl, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          Accept: "*/*",
+          Referer: "https://www.youtube.com/",
+        },
+      });
+
+      if (!upstream.ok) {
+        throw new Error(`Upstream ${upstream.status}`);
+      }
+
+      const contentType = upstream.headers.get("content-type") || "audio/mpeg";
+      const responseHeaders = new Headers();
+      responseHeaders.set("Content-Type", contentType);
+      responseHeaders.set("Accept-Ranges", "bytes");
+      responseHeaders.set("Cache-Control", "no-store");
+
+      return new Response(upstream.body, {
+        status: upstream.status,
+        headers: responseHeaders,
+      });
+    } catch (e: any) {
+      console.error(`[stream] client=${client} message:`, e.message);
+      lastError = e;
+      continue;
+    }
+  }
+
+  const isBotError = lastError?.message?.toLowerCase().includes("not a bot") ||
+    lastError?.stderr?.toLowerCase().includes("not a bot");
+
+  return new Response(
+    isBotError
+      ? "YouTube demande une vérification anti-bot. Vérifiez que cookies.txt est monté sur Render."
+      : `Erreur stream: ${lastError?.message || "inconnue"}`,
+    { status: 500 }
+  );
 }
