@@ -1,11 +1,40 @@
-export const runtime = "nodejs";
-export const maxDuration = 60;
+import { NextResponse } from "next/server";
 
-const PIPED_INSTANCES = [
-  "https://pipedapi.kavin.rocks",
-  "https://api.piped.privacydev.net",
-  "https://piped-api.garudalinux.org",
-  "https://api-piped.mha.fi",
+export const runtime = "nodejs";
+export const maxDuration = 30;
+
+const STREAM_APIS = [
+  // Instances Invidious
+  {
+    url: (id: string) => `https://invidious.privacydev.net/api/v1/videos/${id}`,
+    extract: (data: any) => {
+      const formats = data.adaptiveFormats?.filter((f: any) => f.type?.includes("audio")) || [];
+      return formats[0]?.url;
+    },
+  },
+  {
+    url: (id: string) => `https://inv.tux.pizza/api/v1/videos/${id}`,
+    extract: (data: any) => {
+      const formats = data.adaptiveFormats?.filter((f: any) => f.type?.includes("audio")) || [];
+      return formats[0]?.url;
+    },
+  },
+  {
+    url: (id: string) => `https://yt.artemislena.eu/api/v1/videos/${id}`,
+    extract: (data: any) => {
+      const formats = data.adaptiveFormats?.filter((f: any) => f.type?.includes("audio")) || [];
+      return formats[0]?.url;
+    },
+  },
+  // Instances Piped
+  {
+    url: (id: string) => `https://pipedapi.kavin.rocks/streams/${id}`,
+    extract: (data: any) => data.audioStreams?.[0]?.url,
+  },
+  {
+    url: (id: string) => `https://api.piped.privacydev.net/streams/${id}`,
+    extract: (data: any) => data.audioStreams?.[0]?.url,
+  },
 ];
 
 export async function GET(request: Request) {
@@ -13,50 +42,34 @@ export async function GET(request: Request) {
   const videoId = searchParams.get("videoId");
 
   if (!videoId) {
-    return new Response("Paramètre videoId manquant", { status: 400 });
+    return NextResponse.json({ error: "Paramètre videoId manquant" }, { status: 400 });
   }
 
-  for (const instance of PIPED_INSTANCES) {
+  for (const api of STREAM_APIS) {
     try {
-      const res = await fetch(`${instance}/streams/${videoId}`, {
-        headers: { "User-Agent": "Mozilla/5.0" },
-        signal: AbortSignal.timeout(6000),
+      const endpoint = api.url(videoId);
+      const res = await fetch(endpoint, {
+        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
+        signal: AbortSignal.timeout(4000),
       });
 
       if (!res.ok) continue;
 
       const data = await res.json();
-      const audioStreams = data.audioStreams;
+      const directAudioUrl = api.extract(data);
 
-      if (!audioStreams || audioStreams.length === 0) continue;
-
-      // On récupère le meilleur flux audio
-      const bestAudio = audioStreams[0].url;
-
-      const upstream = await fetch(bestAudio, {
-        headers: {
-          "User-Agent": "Mozilla/5.0",
-          Accept: "*/*",
-        },
-      });
-
-      if (!upstream.ok) continue;
-
-      const headers = new Headers();
-      headers.set("Content-Type", upstream.headers.get("content-type") || "audio/webm");
-      headers.set("Accept-Ranges", "bytes");
-      headers.set("Cache-Control", "no-store");
-
-      return new Response(upstream.body, {
-        status: upstream.status,
-        headers,
-      });
-    } catch {
+      if (directAudioUrl && directAudioUrl.startsWith("http")) {
+        // Redirection 302 directe vers le CDN audio pour une lecture instantanée sans saturer Vercel
+        return NextResponse.redirect(directAudioUrl, 302);
+      }
+    } catch (e: any) {
+      console.warn(`[stream fallback] ${api.url(videoId)} failed:`, e.message);
       continue;
     }
   }
 
-  return new Response("Impossible de récupérer le flux audio (instances indisponibles)", {
-    status: 500,
-  });
+  return NextResponse.json(
+    { error: "Impossible de récupérer le flux audio parmi les instances disponibles." },
+    { status: 502 }
+  );
 }
