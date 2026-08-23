@@ -1,67 +1,11 @@
-import YTDlpWrap from "yt-dlp-wrap";
-import { join } from "path";
-import { existsSync, copyFileSync, chmodSync } from "fs";
-
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-async function getYtDlp(): Promise<YTDlpWrap> {
-  if (process.env.YTDLP_PATH) {
-    return new YTDlpWrap(process.env.YTDLP_PATH);
-  }
-
-  // En local sous Windows
-  if (process.platform === "win32") {
-    const localExe = join(process.cwd(), "bin", "yt-dlp.exe");
-    if (!existsSync(localExe)) {
-      throw new Error("yt-dlp binaire introuvable: " + localExe);
-    }
-    return new YTDlpWrap(localExe);
-  }
-
-  // Sur Vercel / Linux : copie vers /tmp et application des droits d'exécution
-  const targetPath = "/tmp/yt-dlp";
-  if (!existsSync(targetPath)) {
-    const sourcePath = join(process.cwd(), "bin", "yt-dlp");
-    if (!existsSync(sourcePath)) {
-      throw new Error("yt-dlp binaire source introuvable: " + sourcePath);
-    }
-    copyFileSync(sourcePath, targetPath);
-    chmodSync(targetPath, 0o755);
-  }
-
-  return new YTDlpWrap(targetPath);
-}
-
-function getCookiesArgs(): string[] {
-  if (process.env.YTDLP_COOKIES_PATH && existsSync(process.env.YTDLP_COOKIES_PATH)) {
-    return ["--cookies", process.env.YTDLP_COOKIES_PATH];
-  }
-
-  const rootCookies = join(process.cwd(), "cookies.txt");
-  if (existsSync(rootCookies)) {
-    if (process.platform !== "win32") {
-      const tmpCookies = "/tmp/cookies.txt";
-      if (!existsSync(tmpCookies)) {
-        copyFileSync(rootCookies, tmpCookies);
-      }
-      return ["--cookies", tmpCookies];
-    }
-    return ["--cookies", rootCookies];
-  }
-
-  if (existsSync("/etc/secrets/cookies.txt")) {
-    return ["--cookies", "/etc/secrets/cookies.txt"];
-  }
-
-  return [];
-}
-
-const CLIENT_FALLBACKS = [
-  "android_vr",
-  "tv_embedded",
-  "web_safari",
-  "web",
+const PIPED_INSTANCES = [
+  "https://pipedapi.kavin.rocks",
+  "https://api.piped.privacydev.net",
+  "https://piped-api.garudalinux.org",
+  "https://api-piped.mha.fi",
 ];
 
 export async function GET(request: Request) {
@@ -72,73 +16,47 @@ export async function GET(request: Request) {
     return new Response("Paramètre videoId manquant", { status: 400 });
   }
 
-  const ytDlp = await getYtDlp();
-  const cookiesArgs = getCookiesArgs();
-
-  let lastError: any = null;
-
-  for (const client of CLIENT_FALLBACKS) {
+  for (const instance of PIPED_INSTANCES) {
     try {
-      const ytArgs = [
-        `--format-sort-force`,
-        `--format-sort`, "res:360",
-        `-f`, "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best[height<=360]",
-        `--no-playlist`,
-        `--no-warnings`,
-        `--retries`, "2",
-        `--socket-timeout`, "15",
-        `--no-check-certificates`,
-        `--extractor-args`, `youtube:player_client=${client}`,
-        ...cookiesArgs,
-        `--get-url`,
-        `--`,
-        videoId,
-      ];
+      const res = await fetch(`${instance}/streams/${videoId}`, {
+        headers: { "User-Agent": "Mozilla/5.0" },
+        signal: AbortSignal.timeout(6000),
+      });
 
-      const result = await ytDlp.execPromise(ytArgs);
-      const streamUrl = result.trim().split("\n")[0];
+      if (!res.ok) continue;
 
-      if (!streamUrl || !streamUrl.startsWith("http")) {
-        throw new Error("URL de stream invalide");
-      }
+      const data = await res.json();
+      const audioStreams = data.audioStreams;
 
-      const upstream = await fetch(streamUrl, {
+      if (!audioStreams || audioStreams.length === 0) continue;
+
+      // On récupère le meilleur flux audio
+      const bestAudio = audioStreams[0].url;
+
+      const upstream = await fetch(bestAudio, {
         headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          "User-Agent": "Mozilla/5.0",
           Accept: "*/*",
-          Referer: "https://www.youtube.com/",
         },
       });
 
-      if (!upstream.ok) {
-        throw new Error(`Upstream ${upstream.status}`);
-      }
+      if (!upstream.ok) continue;
 
-      const contentType = upstream.headers.get("content-type") || "audio/mpeg";
-      const responseHeaders = new Headers();
-      responseHeaders.set("Content-Type", contentType);
-      responseHeaders.set("Accept-Ranges", "bytes");
-      responseHeaders.set("Cache-Control", "no-store");
+      const headers = new Headers();
+      headers.set("Content-Type", upstream.headers.get("content-type") || "audio/webm");
+      headers.set("Accept-Ranges", "bytes");
+      headers.set("Cache-Control", "no-store");
 
       return new Response(upstream.body, {
         status: upstream.status,
-        headers: responseHeaders,
+        headers,
       });
-    } catch (e: any) {
-      console.error(`[stream] client=${client} error:`, e.stderr || e.message);
-      lastError = e;
+    } catch {
       continue;
     }
   }
 
-  const isBotError =
-    lastError?.message?.toLowerCase().includes("not a bot") ||
-    lastError?.stderr?.toLowerCase().includes("not a bot");
-
-  return new Response(
-    isBotError
-      ? "YouTube demande une vérification anti-bot. Vérifiez que cookies.txt est valide."
-      : `Erreur stream: ${lastError?.message || "inconnue"}`,
-    { status: 500 }
-  );
+  return new Response("Impossible de récupérer le flux audio (instances indisponibles)", {
+    status: 500,
+  });
 }
