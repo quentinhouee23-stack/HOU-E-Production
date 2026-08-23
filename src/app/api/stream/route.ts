@@ -1,32 +1,59 @@
 import YTDlpWrap from "yt-dlp-wrap";
 import { join } from "path";
-import { existsSync, mkdirSync } from "fs";
+import { existsSync, copyFileSync, chmodSync } from "fs";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
-
-const COOKIES_PATH = "/etc/secrets/cookies.txt";
 
 async function getYtDlp(): Promise<YTDlpWrap> {
   if (process.env.YTDLP_PATH) {
     return new YTDlpWrap(process.env.YTDLP_PATH);
   }
-  const binDir = join(process.cwd(), "bin");
-  const exeName = process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp";
-  const exePath = join(binDir, exeName);
-  if (!existsSync(exePath)) {
-    throw new Error("yt-dlp binaire introuvable: " + exePath);
+
+  // En local sous Windows
+  if (process.platform === "win32") {
+    const localExe = join(process.cwd(), "bin", "yt-dlp.exe");
+    if (!existsSync(localExe)) {
+      throw new Error("yt-dlp binaire introuvable: " + localExe);
+    }
+    return new YTDlpWrap(localExe);
   }
-  return new YTDlpWrap(exePath);
+
+  // Sur Vercel / Linux : copie vers /tmp et application des droits d'exécution
+  const targetPath = "/tmp/yt-dlp";
+  if (!existsSync(targetPath)) {
+    const sourcePath = join(process.cwd(), "bin", "yt-dlp");
+    if (!existsSync(sourcePath)) {
+      throw new Error("yt-dlp binaire source introuvable: " + sourcePath);
+    }
+    copyFileSync(sourcePath, targetPath);
+    chmodSync(targetPath, 0o755);
+  }
+
+  return new YTDlpWrap(targetPath);
 }
 
 function getCookiesArgs(): string[] {
   if (process.env.YTDLP_COOKIES_PATH && existsSync(process.env.YTDLP_COOKIES_PATH)) {
     return ["--cookies", process.env.YTDLP_COOKIES_PATH];
   }
-  if (existsSync(COOKIES_PATH)) {
-    return ["--cookies", COOKIES_PATH];
+
+  const rootCookies = join(process.cwd(), "cookies.txt");
+  if (existsSync(rootCookies)) {
+    if (process.platform !== "win32") {
+      const tmpCookies = "/tmp/cookies.txt";
+      if (!existsSync(tmpCookies)) {
+        copyFileSync(rootCookies, tmpCookies);
+      }
+      return ["--cookies", tmpCookies];
+    }
+    return ["--cookies", rootCookies];
   }
+
+  if (existsSync("/etc/secrets/cookies.txt")) {
+    return ["--cookies", "/etc/secrets/cookies.txt"];
+  }
+
   return [];
 }
 
@@ -34,6 +61,7 @@ const CLIENT_FALLBACKS = [
   "android_vr",
   "tv_embedded",
   "web_safari",
+  "web",
 ];
 
 export async function GET(request: Request) {
@@ -97,18 +125,19 @@ export async function GET(request: Request) {
         headers: responseHeaders,
       });
     } catch (e: any) {
-      console.error(`[stream] client=${client} message:`, e.message);
+      console.error(`[stream] client=${client} error:`, e.stderr || e.message);
       lastError = e;
       continue;
     }
   }
 
-  const isBotError = lastError?.message?.toLowerCase().includes("not a bot") ||
+  const isBotError =
+    lastError?.message?.toLowerCase().includes("not a bot") ||
     lastError?.stderr?.toLowerCase().includes("not a bot");
 
   return new Response(
     isBotError
-      ? "YouTube demande une vérification anti-bot. Vérifiez que cookies.txt est monté sur Render."
+      ? "YouTube demande une vérification anti-bot. Vérifiez que cookies.txt est valide."
       : `Erreur stream: ${lastError?.message || "inconnue"}`,
     { status: 500 }
   );
