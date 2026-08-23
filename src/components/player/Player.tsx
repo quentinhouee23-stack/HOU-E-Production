@@ -27,7 +27,6 @@ export function Player() {
   const playerRef = useRef<any>(null);
   const progressIntervalRef = useRef<any>(null);
   const isReadyRef = useRef(false);
-  const hasUserInteractedRef = useRef(false);
 
   useEffect(() => {
     setIsClient(true);
@@ -47,32 +46,7 @@ export function Player() {
     return match && match[1]?.length === 11 ? match[1] : null;
   };
 
-  // 1. Déverrouillage audio pour iOS au premier tap n'importe où sur la page
-  useEffect(() => {
-    const unlockAudio = () => {
-      hasUserInteractedRef.current = true;
-      if (playerRef.current && isReadyRef.current) {
-        try {
-          playerRef.current.playVideo();
-          if (status !== "playing") {
-            playerRef.current.pauseVideo();
-          }
-        } catch {}
-      }
-      document.removeEventListener("touchstart", unlockAudio);
-      document.removeEventListener("click", unlockAudio);
-    };
-
-    document.addEventListener("touchstart", unlockAudio, { passive: true });
-    document.addEventListener("click", unlockAudio, { passive: true });
-
-    return () => {
-      document.removeEventListener("touchstart", unlockAudio);
-      document.removeEventListener("click", unlockAudio);
-    };
-  }, [status]);
-
-  // 2. Initialisation de l'API YouTube Iframe
+  // Chargement de l'API YouTube
   useEffect(() => {
     if (!isClient) return;
 
@@ -89,26 +63,20 @@ export function Player() {
           fs: 0,
           playsinline: 1,
           enablejsapi: 1,
-          origin: window.location.origin,
           rel: 0,
         },
         events: {
           onReady: () => {
             isReadyRef.current = true;
-            if (playerRef.current?.setVolume) {
-              playerRef.current.setVolume(Math.max(0, Math.min(100, volume * 100)));
-            }
             const currentId = getVideoId(playingUrl);
             if (currentId && status === "playing") {
               playerRef.current.loadVideoById(currentId);
             }
           },
           onStateChange: (event: any) => {
-            // 0 = ENDED
             if (event.data === 0) {
               onEnded();
             }
-            // 1 = PLAYING
             if (event.data === 1) {
               const dur = playerRef.current.getDuration();
               if (dur && isFinite(dur)) {
@@ -119,9 +87,9 @@ export function Player() {
           onError: (event: any) => {
             console.warn("YouTube Player error:", event.data);
             if (event.data === 150 || event.data === 101) {
-              setPlaybackError("Titre bloqué par YouTube pour l'intégration");
+              setPlaybackError("Titre restreint par le label sur mobile");
             } else {
-              setPlaybackError(`Erreur de lecture (${event.data})`);
+              setPlaybackError(`Erreur lecture (${event.data})`);
             }
           },
         },
@@ -144,7 +112,7 @@ export function Player() {
     };
   }, [isClient]);
 
-  // 3. Suivi de progression
+  // Suivi de la progression
   useEffect(() => {
     if (status === "playing") {
       progressIntervalRef.current = setInterval(() => {
@@ -162,7 +130,7 @@ export function Player() {
     };
   }, [status, onProgress]);
 
-  // 4. Changement de morceau
+  // Changement de morceau
   useEffect(() => {
     const videoId = getVideoId(playingUrl);
     if (!videoId || !isReadyRef.current || !playerRef.current?.loadVideoById) return;
@@ -174,7 +142,7 @@ export function Player() {
     }
   }, [playingUrl]);
 
-  // 5. Play / Pause
+  // Play / Pause
   useEffect(() => {
     if (!isReadyRef.current || !playerRef.current) return;
 
@@ -185,14 +153,14 @@ export function Player() {
     }
   }, [status]);
 
-  // 6. Volume
+  // Volume (bureau uniquement, ignoré silencieusement par iOS)
   useEffect(() => {
     if (isReadyRef.current && playerRef.current?.setVolume) {
       playerRef.current.setVolume(Math.max(0, Math.min(100, volume * 100)));
     }
   }, [volume]);
 
-  // 7. Seek
+  // Seek
   useEffect(() => {
     if (seekRequest !== null && isReadyRef.current && playerRef.current?.seekTo) {
       playerRef.current.seekTo(seekRequest, true);
@@ -206,16 +174,18 @@ export function Player() {
     <div
       style={{
         position: "fixed",
-        bottom: 0,
-        right: 0,
-        width: "64px",
-        height: "64px",
-        opacity: 0.001,
-        pointerEvents: "none",
-        zIndex: -1,
+        bottom: "80px",
+        right: "12px",
+        width: "120px",
+        height: "68px",
+        borderRadius: "8px",
+        overflow: "hidden",
+        boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+        zIndex: 50,
+        backgroundColor: "#000",
       }}
     >
-      <div id="yt-player-target" />
+      <div id="yt-player-target" style={{ width: "100%", height: "100%" }} />
     </div>
   );
 }
