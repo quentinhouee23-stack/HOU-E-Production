@@ -3,13 +3,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useMusic } from "@/context/MusicContext";
 
-declare global {
-  interface Window {
-    YT: any;
-    onYouTubeIframeAPIReady: () => void;
-  }
-}
-
 export function Player() {
   const {
     playingUrl,
@@ -23,266 +16,150 @@ export function Player() {
     setPlaybackError,
   } = useMusic();
 
-  const [isClient, setIsClient] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
-  const playerRef = useRef<any>(null);
-  const progressIntervalRef = useRef<any>(null);
-  const isYtReadyRef = useRef(false);
-  const activeTrackRef = useRef<string | null>(null);
+  const [isClient, setIsClient] = useState(false);
+  const isAudioUnlocked = useRef(false);
 
   useEffect(() => {
     setIsClient(true);
   }, []);
 
-  // Détecte si l'URL est un flux audio direct / MP3
+  // 1. DÉVERROUILLAGE iOS : Obligatoire pour autoriser la lecture asynchrone
+  useEffect(() => {
+    const unlockAudio = () => {
+      const audio = audioRef.current;
+      if (audio && !isAudioUnlocked.current) {
+        // Lecture d'un micro-fichier silencieux au premier tap de l'utilisateur
+        audio.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
+        audio.play().then(() => {
+          audio.pause();
+          isAudioUnlocked.current = true;
+        }).catch(() => {});
+      }
+      document.removeEventListener("touchstart", unlockAudio);
+      document.removeEventListener("click", unlockAudio);
+    };
+
+    document.addEventListener("touchstart", unlockAudio, { passive: true, once: true });
+    document.addEventListener("click", unlockAudio, { passive: true, once: true });
+
+    return () => {
+      document.removeEventListener("touchstart", unlockAudio);
+      document.removeEventListener("click", unlockAudio);
+    };
+  }, []);
+
+  // 2. EXTRACTION ID ET FLUX DIRECT
   const isDirectAudio = (url: string | null): boolean => {
     if (!url) return false;
-    return (
-      url.endsWith(".mp3") ||
-      url.endsWith(".m4a") ||
-      url.includes("dzcdn.net") ||
-      url.includes("audio-preview") ||
-      url.includes(".mp3?")
-    );
+    return url.endsWith(".mp3") || url.endsWith(".m4a") || url.includes("dzcdn.net") || url.includes("audio-preview");
   };
 
-  // Extraction d'ID YouTube
   const extractVideoId = (input: string | null): string | null => {
     if (!input || isDirectAudio(input)) return null;
-    if (input.length === 11 && !input.includes("/") && !input.includes("?")) {
-      return input;
-    }
-    try {
-      const url = new URL(input, "https://dummy.local");
-      const paramId = url.searchParams.get("videoId") || url.searchParams.get("v");
-      if (paramId && paramId.length === 11) return paramId;
-    } catch {}
+    if (input.length === 11 && !input.includes("/")) return input;
     const match = input.match(/(?:youtu\.be\/|v\/|embed\/|watch\?v=|\/stream\?videoId=)([^#&?]{11})/);
     return match ? match[1] : null;
   };
 
-  // Déblocage tactile initial
+  // Appel direct à Cobalt depuis le client (contourne Vercel et les blocages IP)
+  const fetchCobaltStream = async (videoId: string) => {
+    try {
+      const res = await fetch("https://api.cobalt.tools/api/json", {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          url: `https://www.youtube.com/watch?v=${videoId}`,
+          isAudioOnly: true,
+          aFormat: "mp3", // Format universel iPhone / PC
+        }),
+      });
+      
+      const data = await res.json();
+      return data.url || null;
+    } catch (error) {
+      console.error("[Cobalt Fetch Error]", error);
+      return null;
+    }
+  };
+
+  // 3. LOGIQUE DE LECTURE
   useEffect(() => {
-    const unlock = () => {
+    const loadAndPlay = async () => {
       const audio = audioRef.current;
-      if (audio) {
-        audio.muted = true;
-        audio.play().then(() => {
-          audio.pause();
-          audio.muted = false;
-        }).catch(() => {});
+      if (!audio || !playingUrl) return;
+
+      audio.pause();
+      
+      let finalStreamUrl = playingUrl;
+
+      // Si c'est un morceau YouTube, on le convertit en MP3 direct via Cobalt
+      if (!isDirectAudio(playingUrl)) {
+        const videoId = extractVideoId(playingUrl);
+        if (!videoId) return;
+        
+        const mp3Url = await fetchCobaltStream(videoId);
+        if (!mp3Url) {
+          setPlaybackError("Impossible de générer le flux audio.");
+          return;
+        }
+        finalStreamUrl = mp3Url;
       }
-      if (playerRef.current && isYtReadyRef.current) {
-        try {
-          playerRef.current.playVideo();
-          if (status !== "playing") playerRef.current.pauseVideo();
-        } catch {}
+
+      audio.src = finalStreamUrl;
+      audio.load();
+
+      if (status === "playing") {
+        audio.play().catch((err) => {
+          console.warn("[Autoplay iOS bloqué, attente interaction]", err);
+          setPlaybackError("Appuyez sur Play pour lancer (sécurité iOS)");
+        });
       }
-      document.removeEventListener("touchstart", unlock);
-      document.removeEventListener("click", unlock);
     };
 
-    document.addEventListener("touchstart", unlock, { passive: true, once: true });
-    document.addEventListener("click", unlock, { passive: true, once: true });
+    loadAndPlay();
+  }, [playingUrl]); // S'exécute uniquement au changement de musique
 
-    return () => {
-      document.removeEventListener("touchstart", unlock);
-      document.removeEventListener("click", unlock);
-    };
+  // 4. CONTRÔLES (Play / Pause / Volume / Seek)
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (status === "playing") {
+      audio.play().catch(() => {});
+    } else if (status === "paused") {
+      audio.pause();
+    }
   }, [status]);
 
-  // Initialisation Iframe YouTube
   useEffect(() => {
-    if (!isClient) return;
-
-    const setupPlayer = () => {
-      if (playerRef.current || !document.getElementById("yt-engine")) return;
-
-      playerRef.current = new window.YT.Player("yt-engine", {
-        height: "100%",
-        width: "100%",
-        playerVars: {
-          autoplay: 1,
-          controls: 0,
-          disablekb: 1,
-          fs: 0,
-          playsinline: 1,
-          enablejsapi: 1,
-          rel: 0,
-          origin: window.location.origin,
-        },
-        events: {
-          onReady: () => {
-            isYtReadyRef.current = true;
-            if (playerRef.current?.setVolume) {
-              playerRef.current.setVolume(Math.max(0, Math.min(100, volume * 100)));
-            }
-            if (activeTrackRef.current && !isDirectAudio(activeTrackRef.current)) {
-              const id = extractVideoId(activeTrackRef.current);
-              if (id) playerRef.current.loadVideoById(id);
-            }
-          },
-          onStateChange: (event: any) => {
-            if (event.data === 0) onEnded();
-            if (event.data === 1) {
-              const dur = playerRef.current.getDuration();
-              if (dur && isFinite(dur)) onDuration(dur);
-            }
-          },
-          onError: (event: any) => {
-            console.warn("[YouTube API Error]", event.data);
-            if (event.data === 150 || event.data === 101) {
-              setPlaybackError("Titre indisponible en lecture intégrée.");
-            } else {
-              setPlaybackError(`Erreur lecture (${event.data})`);
-            }
-          },
-        },
-      });
-    };
-
-    if (window.YT && window.YT.Player) {
-      setupPlayer();
-    } else {
-      window.onYouTubeIframeAPIReady = setupPlayer;
-      if (!document.querySelector('script[src*="youtube.com/iframe_api"]')) {
-        const script = document.createElement("script");
-        script.src = "https://www.youtube.com/iframe_api";
-        document.body.appendChild(script);
-      }
-    }
-
-    return () => {
-      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
-    };
-  }, [isClient]);
-
-  // Suivi de progression pour YouTube
-  useEffect(() => {
-    if (status === "playing" && !isDirectAudio(playingUrl)) {
-      progressIntervalRef.current = setInterval(() => {
-        if (playerRef.current?.getCurrentTime && isYtReadyRef.current) {
-          const currentTime = playerRef.current.getCurrentTime();
-          onProgress({ playedSeconds: currentTime || 0 });
-        }
-      }, 500);
-    } else {
-      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
-    }
-
-    return () => {
-      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
-    };
-  }, [status, playingUrl, onProgress]);
-
-  // Changement de piste
-  useEffect(() => {
-    if (!playingUrl) return;
-    activeTrackRef.current = playingUrl;
-
-    if (isDirectAudio(playingUrl)) {
-      if (playerRef.current?.pauseVideo) {
-        playerRef.current.pauseVideo();
-      }
-      if (audioRef.current) {
-        audioRef.current.src = playingUrl;
-        audioRef.current.load();
-        if (status === "playing") {
-          audioRef.current.play().catch(() => {});
-        }
-      }
-    } else {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.src = "";
-      }
-      const videoId = extractVideoId(playingUrl);
-      if (videoId && isYtReadyRef.current && playerRef.current?.loadVideoById) {
-        playerRef.current.loadVideoById(videoId);
-        if (status === "playing") {
-          playerRef.current.playVideo();
-        }
-      }
-    }
-  }, [playingUrl]);
-
-  // Gestion Play / Pause
-  useEffect(() => {
-    if (isDirectAudio(playingUrl)) {
-      const audio = audioRef.current;
-      if (!audio) return;
-      if (status === "playing") {
-        audio.play().catch(() => {});
-      } else if (status === "paused") {
-        audio.pause();
-      }
-    } else {
-      if (!isYtReadyRef.current || !playerRef.current) return;
-      if (status === "playing") {
-        playerRef.current.playVideo?.();
-      } else if (status === "paused") {
-        playerRef.current.pauseVideo?.();
-      }
-    }
-  }, [status, playingUrl]);
-
-  // Volume
-  useEffect(() => {
-    if (audioRef.current) {
-      audioRef.current.volume = Math.max(0, Math.min(1, volume));
-    }
-    if (isYtReadyRef.current && playerRef.current?.setVolume) {
-      playerRef.current.setVolume(Math.max(0, Math.min(100, volume * 100)));
-    }
+    if (audioRef.current) audioRef.current.volume = Math.max(0, Math.min(1, volume));
   }, [volume]);
 
-  // Seek
   useEffect(() => {
-    if (seekRequest !== null) {
-      if (isDirectAudio(playingUrl) && audioRef.current) {
-        audioRef.current.currentTime = seekRequest;
-      } else if (isYtReadyRef.current && playerRef.current?.seekTo) {
-        playerRef.current.seekTo(seekRequest, true);
-      }
+    if (seekRequest !== null && audioRef.current) {
+      audioRef.current.currentTime = seekRequest;
       clearSeekRequest();
     }
-  }, [seekRequest, clearSeekRequest, playingUrl]);
+  }, [seekRequest, clearSeekRequest]);
 
   if (!isClient) return null;
 
   return (
-    <>
-      {/* Moteur 1 : Aperçus et MP3 natifs */}
-      <audio
-        ref={audioRef}
-        playsInline
-        preload="auto"
-        onTimeUpdate={() =>
-          onProgress({ playedSeconds: audioRef.current?.currentTime ?? 0 })
-        }
-        onDurationChange={() => {
-          const d = audioRef.current?.duration;
-          if (d && isFinite(d)) onDuration(d);
-        }}
-        onEnded={onEnded}
-        style={{ display: "none" }}
-      />
-
-      {/* Moteur 2 : YouTube officiel en arrière-plan invisible */}
-      <div
-        style={{
-          position: "fixed",
-          bottom: 0,
-          left: 0,
-          width: "1px",
-          height: "1px",
-          opacity: 0.01,
-          pointerEvents: "none",
-          zIndex: -1,
-        }}
-      >
-        <div id="yt-engine" />
-      </div>
-    </>
+    <audio
+      ref={audioRef}
+      playsInline
+      preload="auto"
+      onTimeUpdate={() => onProgress({ playedSeconds: audioRef.current?.currentTime ?? 0 })}
+      onDurationChange={() => {
+        const d = audioRef.current?.duration;
+        if (d && isFinite(d)) onDuration(d);
+      }}
+      onEnded={onEnded}
+      onError={() => setPlaybackError("Erreur de flux réseau.")}
+      style={{ display: "none" }}
+    />
   );
 }
