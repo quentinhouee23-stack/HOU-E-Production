@@ -43,13 +43,13 @@ export default function LoginPage() {
     }
   };
 
-  // Connexion rapide avec Google (redirige dynamiquement vers l'URL actuelle du site)
+  // Connexion rapide avec Google (redirige vers la route de callback Next.js)
   const handleGoogleLogin = async () => {
     try {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: `${window.location.origin}/profile`,
+          redirectTo: `${window.location.origin}/auth/callback`,
         },
       });
       if (error) throw error;
