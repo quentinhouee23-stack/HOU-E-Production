@@ -112,13 +112,11 @@ export default function PlaylistsPage() {
 
   const [trackToAdd, setTrackToAdd] = useState(null);
 
-  // 🟢 NOUVEL ETAT : On ajoute 'status' et 'message' pour gérer les écrans de fin d'import
   const [importState, setImportState] = useState({ active: false, progress: 0, text: "", status: "loading", message: "" });
   
   const [showSpotifyImportModal, setShowSpotifyImportModal] = useState(false);
   const [spotifyUrlInput, setSpotifyUrlInput] = useState("");
 
-  // 🟢 LE VERROU : Vérifie si N'IMPORTE QUELLE modale (y compris la barre de progression) est ouverte
   const isAnyModalOpen = isWizardOpen || showShareModal || showCreateModal || showSpotifyImportModal || !!trackToAdd || importState.active;
   
   useEffect(() => {
@@ -185,19 +183,16 @@ export default function PlaylistsPage() {
   const handleSaveWizard = async (name: string, tracks: Track[]) => {
     await createPlaylist(name, tracks);
     setIsWizardOpen(false);
-    toggleNav(true);
+    toggleNav(true); 
   };
 
-  // 🟢 LA NOUVELLE FONCTION D'IMPORT : Fini les `alert()` sauvages
   const executeSpotifyImport = async () => {
     if (!spotifyUrlInput.includes("spotify")) {
-      // Pour l'erreur de base avant même de lancer, une simple alerte est OK
       alert("Ce lien ne semble pas être un lien Spotify valide.");
       return;
     }
 
     setShowSpotifyImportModal(false); 
-    // On ne réactive pas la navigation ici, on la laisse cachée !
     setImportState({ active: true, progress: 0, text: "Analyse du lien...", status: "loading", message: "" }); 
 
     try {
@@ -246,7 +241,7 @@ export default function PlaylistsPage() {
 
       if (matchedTracks.length > 0) {
         const cleanTracksToSave = matchedTracks.map((t: any) => ({
-          id: t.id ? t.id.toString() : Date.now().toString() + Math.random().toString(),
+          id: t.id ? t.id.toString() : (Date.now() + Math.random()).toString(),
           title: t.title || "Inconnu",
           artist: t.artist || "Inconnu",
           image: t.image || "",
@@ -254,17 +249,26 @@ export default function PlaylistsPage() {
           preview: t.preview || ""
         }));
 
-        createPlaylist(playlistName, cleanTracksToSave).catch(() => {});
-        // 🟢 Affiche l'écran de succès sans fermer la modale
-        setImportState({ 
-          active: true, 
-          progress: 100, 
-          text: "Terminé !", 
-          status: "success", 
-          message: `${matchedTracks.length} titres ont été importés avec succès dans ta nouvelle playlist "${playlistName}".` 
-        });
+        const saved = await createPlaylist(playlistName, cleanTracksToSave);
+
+        if (saved) {
+          setImportState({ 
+            active: true, 
+            progress: 100, 
+            text: "Terminé !", 
+            status: "success", 
+            message: `${matchedTracks.length} titres ont été importés avec succès dans ta nouvelle playlist "${playlistName}".` 
+          });
+        } else {
+          setImportState({ 
+            active: true, 
+            progress: 100, 
+            text: "Erreur", 
+            status: "error", 
+            message: "Impossible d'enregistrer la playlist sur le serveur." 
+          });
+        }
       } else {
-        // 🟢 Affiche l'écran d'erreur
         setImportState({ 
           active: true, 
           progress: 100, 
@@ -284,7 +288,6 @@ export default function PlaylistsPage() {
     }
   };
 
-  // 🟢 FONCTION POUR FERMER LA FENÊTRE DE PROGRESSION
   const closeImportProgress = () => {
     setImportState({ active: false, progress: 0, text: "", status: "loading", message: "" });
     setSpotifyUrlInput("");
@@ -322,10 +325,10 @@ export default function PlaylistsPage() {
     }, 50);
   };
 
-  const handleRemoveTrack = (trackId: string) => {
+  const handleRemoveTrack = async (trackId: string) => {
     if (!activePlaylist?.tracks || !activePlaylist?.id) return;
     const newTracks = activePlaylist.tracks.filter((t: any) => t?.id !== trackId);
-    updatePlaylist(activePlaylist.id, { tracks: newTracks });
+    await updatePlaylist(activePlaylist.id, { tracks: newTracks });
   };
 
   const handleSearchAdd = (e: any) => {
@@ -341,7 +344,7 @@ export default function PlaylistsPage() {
           const data = await res.json();
           setEditResults(data.tracks || []);
         } catch (error) {
-          console.error("Erreur de recherche (vérifie si la route API existe) :", error);
+          console.error("Erreur de recherche :", error);
           setEditResults([]);
         }
       }, 400);
@@ -350,17 +353,17 @@ export default function PlaylistsPage() {
     }
   };
 
-  const handleAddTrack = (track: Track) => {
+  const handleAddTrack = async (track: Track) => {
     if (!track || !activePlaylist?.id) return;
     const currentTracks = activePlaylist.tracks || [];
     if (currentTracks.find((t: any) => t?.id === track.id)) return;
     const newTracks = [...currentTracks, track];
-    updatePlaylist(activePlaylist.id, { tracks: newTracks });
+    await updatePlaylist(activePlaylist.id, { tracks: newTracks });
   };
 
-  const handleRename = () => {
+  const handleRename = async () => {
     if (activePlaylist && user && activePlaylist.owner_id === user.id) {
-      updatePlaylist(activePlaylist.id, { name: editName });
+      await updatePlaylist(activePlaylist.id, { name: editName });
     }
   };
 
@@ -388,12 +391,12 @@ export default function PlaylistsPage() {
         const data = await res.json();
         if (data.tracks) finalTracks = [...keptTracks, ...data.tracks];
       } catch (e) {
-        console.error("Erreur", e);
+        console.error("Erreur smart-playlist :", e);
       }
     }
 
     if (activePlaylist?.id) {
-      updatePlaylist(activePlaylist.id, { tracks: finalTracks });
+      await updatePlaylist(activePlaylist.id, { tracks: finalTracks });
     }
     
     setPinnedTracks([]);
@@ -401,11 +404,11 @@ export default function PlaylistsPage() {
     setViewMode("view");
   };
 
-  const handleReorder = (newOrder: Track[]) => {
+  const handleReorder = async (newOrder: Track[]) => {
     if (!activePlaylist?.id) return;
     const updated = { ...activePlaylist, tracks: newOrder };
     setActivePlaylist(updated);
-    updatePlaylist(activePlaylist.id, { tracks: newOrder });
+    await updatePlaylist(activePlaylist.id, { tracks: newOrder });
   };
 
   const togglePreview = async (e, track) => {
@@ -424,7 +427,7 @@ export default function PlaylistsPage() {
           setDynamicPreviews(prev => ({ ...prev, [track.id]: data.preview }));
         }
       } catch (err) {
-        console.error("Erreur récupération extrait via Backend :", err);
+        console.error("Erreur récupération extrait :", err);
       }
       setIsLoadingPreview(null); 
     }
@@ -632,7 +635,7 @@ export default function PlaylistsPage() {
                               className="h-10 flex-1 rounded-full border border-white/20 hover:border-[#1db954] hover:text-[#1db954] font-bold text-xs transition-all flex items-center justify-center gap-1.5 whitespace-nowrap text-white">
                               <UserPlus className="w-3.5 h-3.5" /> Partager
                             </button>
-                            <button onClick={() => { if(confirm("Supprimer la playlist ?")) { deletePlaylist(activePlaylist?.id); setActivePlaylist(null); } }} 
+                            <button onClick={async () => { if(confirm("Supprimer la playlist ?")) { await deletePlaylist(activePlaylist?.id); setActivePlaylist(null); } }} 
                               className="w-10 h-10 shrink-0 flex items-center justify-center rounded-full bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-all">
                               <Trash2 className="w-4 h-4" />
                             </button>
@@ -816,7 +819,6 @@ export default function PlaylistsPage() {
 
       <PlaylistWizard isOpen={isWizardOpen} onClose={() => { setIsWizardOpen(false); toggleNav(true); }} onSave={handleSaveWizard} />
 
-      {/* 🟢 NOUVELLE INTERFACE DE CHARGEMENT : Plein écran, impossible de naviguer */}
       <AnimatePresence>
         {importState.active && (
           <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4 w-full h-[100dvh]">
@@ -826,7 +828,6 @@ export default function PlaylistsPage() {
               className="relative bg-[#1c1c1e] w-full max-w-sm rounded-[32px] p-6 border border-white/10 shadow-2xl pointer-events-auto text-center flex flex-col items-center"
             >
               
-              {/* ÉTAT 1 : En cours d'analyse */}
               {importState.status === "loading" && (
                 <>
                   <div className="relative w-20 h-20 mx-auto mb-6 flex items-center justify-center">
@@ -849,7 +850,6 @@ export default function PlaylistsPage() {
                 </>
               )}
 
-              {/* ÉTAT 2 : Succès de l'importation */}
               {importState.status === "success" && (
                 <>
                   <div className="w-20 h-20 bg-[#1db954]/20 rounded-full flex items-center justify-center mx-auto mb-6">
@@ -866,7 +866,6 @@ export default function PlaylistsPage() {
                 </>
               )}
 
-              {/* ÉTAT 3 : Erreur pendant l'importation */}
               {importState.status === "error" && (
                 <>
                   <div className="w-20 h-20 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
