@@ -3,6 +3,13 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useMusic } from "@/context/MusicContext";
 
+declare global {
+  interface Window {
+    YT: any;
+    onYouTubeIframeAPIReady: () => void;
+  }
+}
+
 export function Player() {
   const {
     playingUrl,
@@ -16,36 +23,14 @@ export function Player() {
     setPlaybackError,
   } = useMusic();
 
-  const audioRef = useRef<HTMLAudioElement>(null);
   const [isClient, setIsClient] = useState(false);
-  const hasUnlockedAudio = useRef(false);
+  const playerRef = useRef<any>(null);
+  const progressIntervalRef = useRef<any>(null);
+  const isReadyRef = useRef(false);
+  const pendingIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     setIsClient(true);
-  }, []);
-
-  // Déverrouillage audio obligatoire pour iOS au tout premier tap
-  useEffect(() => {
-    const unlock = () => {
-      const audio = audioRef.current;
-      if (audio && !hasUnlockedAudio.current) {
-        audio.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
-        audio.play().then(() => {
-          audio.pause();
-          hasUnlockedAudio.current = true;
-        }).catch(() => {});
-      }
-      document.removeEventListener("touchstart", unlock);
-      document.removeEventListener("click", unlock);
-    };
-
-    document.addEventListener("touchstart", unlock, { passive: true, once: true });
-    document.addEventListener("click", unlock, { passive: true, once: true });
-
-    return () => {
-      document.removeEventListener("touchstart", unlock);
-      document.removeEventListener("click", unlock);
-    };
   }, []);
 
   const extractVideoId = (input: string | null): string | null => {
@@ -62,54 +47,133 @@ export function Player() {
     return match ? match[1] : null;
   };
 
-  // Chargement du flux audio direct
+  // 1. Initialisation de l'Iframe YouTube officielle
   useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio || !playingUrl) return;
+    if (!isClient) return;
 
+    const setupPlayer = () => {
+      if (playerRef.current || !document.getElementById("yt-universal-audio")) return;
+
+      playerRef.current = new window.YT.Player("yt-universal-audio", {
+        height: "100%",
+        width: "100%",
+        playerVars: {
+          autoplay: 1,
+          controls: 0,
+          disablekb: 1,
+          fs: 0,
+          playsinline: 1,
+          enablejsapi: 1,
+          rel: 0,
+          origin: window.location.origin,
+        },
+        events: {
+          onReady: () => {
+            isReadyRef.current = true;
+            if (playerRef.current?.setVolume) {
+              playerRef.current.setVolume(Math.max(0, Math.min(100, volume * 100)));
+            }
+            if (pendingIdRef.current) {
+              playerRef.current.loadVideoById(pendingIdRef.current);
+            }
+          },
+          onStateChange: (event: any) => {
+            // 0 = Terminé
+            if (event.data === 0) {
+              onEnded();
+            }
+            // 1 = En cours de lecture
+            if (event.data === 1) {
+              const dur = playerRef.current.getDuration();
+              if (dur && isFinite(dur)) {
+                onDuration(dur);
+              }
+            }
+          },
+          onError: (event: any) => {
+            console.warn("[YT Error]:", event.data);
+            if (event.data === 150 || event.data === 101) {
+              setPlaybackError("Titre protégé contre la lecture externe");
+            } else {
+              setPlaybackError(`Erreur lecture (${event.data})`);
+            }
+          },
+        },
+      });
+    };
+
+    if (window.YT && window.YT.Player) {
+      setupPlayer();
+    } else {
+      window.onYouTubeIframeAPIReady = setupPlayer;
+      if (!document.querySelector('script[src*="youtube.com/iframe_api"]')) {
+        const tag = document.createElement("script");
+        tag.src = "https://www.youtube.com/iframe_api";
+        document.body.appendChild(tag);
+      }
+    }
+
+    return () => {
+      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
+    };
+  }, [isClient]);
+
+  // 2. Intervalle de suivi de progression
+  useEffect(() => {
+    if (status === "playing") {
+      progressIntervalRef.current = setInterval(() => {
+        if (playerRef.current?.getCurrentTime && isReadyRef.current) {
+          const currentTime = playerRef.current.getCurrentTime();
+          onProgress({ playedSeconds: currentTime || 0 });
+        }
+      }, 500);
+    } else {
+      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
+    }
+
+    return () => {
+      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
+    };
+  }, [status, onProgress]);
+
+  // 3. Changement de morceau
+  useEffect(() => {
     const videoId = extractVideoId(playingUrl);
     if (!videoId) return;
 
-    // Utilisation d'un CDN audio Invidious direct pour l'élément <audio>
-    const directStreamUrl = `https://invidious.privacydev.net/latest_version?id=${videoId}&itag=140`;
+    pendingIdRef.current = videoId;
 
-    audio.src = directStreamUrl;
-    audio.load();
+    if (!isReadyRef.current || !playerRef.current?.loadVideoById) return;
 
     if (status === "playing") {
-      audio.play().catch((err) => {
-        console.warn("Erreur lecture audio:", err);
-        // Fallback sur instance secondaire si la première est occupée
-        audio.src = `https://yt.artemislena.eu/latest_version?id=${videoId}&itag=140`;
-        audio.load();
-        audio.play().catch((e) => setPlaybackError("Appuyez sur play pour lancer la musique"));
-      });
+      playerRef.current.loadVideoById(videoId);
+    } else {
+      playerRef.current.cueVideoById(videoId);
     }
   }, [playingUrl]);
 
-  // Contrôles Play / Pause
+  // 4. Play / Pause
   useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
+    if (!isReadyRef.current || !playerRef.current) return;
 
     if (status === "playing") {
-      audio.play().catch(() => {});
+      playerRef.current.playVideo?.();
     } else if (status === "paused") {
-      audio.pause();
+      playerRef.current.pauseVideo?.();
     }
   }, [status]);
 
-  // Contrôle Volume
+  // 5. Volume
   useEffect(() => {
-    if (audioRef.current) {
-      audioRef.current.volume = Math.max(0, Math.min(1, volume));
+    if (isReadyRef.current && playerRef.current?.setVolume) {
+      playerRef.current.setVolume(Math.max(0, Math.min(100, volume * 100)));
     }
   }, [volume]);
 
-  // Seek
+  // 6. Progression (Seek)
   useEffect(() => {
-    if (seekRequest !== null && audioRef.current) {
-      audioRef.current.currentTime = seekRequest;
+    if (seekRequest !== null && isReadyRef.current && playerRef.current?.seekTo) {
+      playerRef.current.seekTo(seekRequest, true);
       clearSeekRequest();
     }
   }, [seekRequest, clearSeekRequest]);
@@ -117,22 +181,19 @@ export function Player() {
   if (!isClient) return null;
 
   return (
-    <audio
-      ref={audioRef}
-      playsInline
-      preload="auto"
-      onTimeUpdate={() =>
-        onProgress({ playedSeconds: audioRef.current?.currentTime ?? 0 })
-      }
-      onDurationChange={() => {
-        const d = audioRef.current?.duration;
-        if (d && isFinite(d)) onDuration(d);
+    <div
+      style={{
+        position: "fixed",
+        bottom: 0,
+        left: 0,
+        width: "1px",
+        height: "1px",
+        opacity: 0.01,
+        pointerEvents: "none",
+        zIndex: -1,
       }}
-      onEnded={onEnded}
-      onError={() => {
-        setPlaybackError("Flux audio indisponible, réessayez.");
-      }}
-      style={{ display: "none" }}
-    />
+    >
+      <div id="yt-universal-audio" />
+    </div>
   );
 }
