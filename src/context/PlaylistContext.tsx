@@ -10,13 +10,11 @@ const PlaylistContext = createContext<any>(null);
 
 export function PlaylistProvider({ children }: { children: React.ReactNode }) {
   const [playlists, setPlaylists] = useState([]);
-  
   const [isLoaded, setIsLoaded] = useState(false);
   const { user, loading } = useAuth(); 
 
   const preloadImages = (playlistsData) => {
     if (!playlistsData || playlistsData.length === 0) return;
-    
     playlistsData.forEach(p => {
       if (p.tracks && p.tracks.length > 0 && p.tracks[0].image) {
         const img = new Image();
@@ -29,39 +27,46 @@ export function PlaylistProvider({ children }: { children: React.ReactNode }) {
     if (!user) {
       const saved = localStorage.getItem("my_glass_playlists");
       if (saved) {
-        const parsed = JSON.parse(saved);
-        setPlaylists(parsed);
-        preloadImages(parsed);
+        try {
+          const parsed = JSON.parse(saved);
+          setPlaylists(parsed);
+          preloadImages(parsed);
+        } catch (e) {
+          console.error("Erreur lecture local storage :", e);
+        }
       }
       setIsLoaded(true); 
       return;
     }
 
+    // Migration du local vers Supabase
     const saved = localStorage.getItem("my_glass_playlists");
     if (saved) {
-      const localPlaylists = JSON.parse(saved);
-      if (localPlaylists.length > 0) {
-        for (const p of localPlaylists) {
-          await supabase.from("playlists").insert({
-            name: p.name,
-            owner_id: user.id,
-            tracks: p.tracks || [],
-            is_shared: false
-          });
+      try {
+        const localPlaylists = JSON.parse(saved);
+        if (localPlaylists.length > 0) {
+          for (const p of localPlaylists) {
+            await supabase.from("playlists").insert({
+              name: p.name,
+              owner_id: user.id,
+              tracks: p.tracks || [],
+              is_shared: false
+            });
+          }
+          localStorage.removeItem("my_glass_playlists");
         }
-        localStorage.removeItem("my_glass_playlists");
+      } catch (e) {
+        console.error("Erreur migration local -> Supabase :", e);
       }
     }
 
-    // 🟢 DÉTECTEUR DE BLOCAGE POUR TES ANCIENNES PLAYLISTS
     const { data, error } = await supabase
       .from("playlists")
       .select("*, playlist_collaborators(user_id)")
       .order('created_at', { ascending: false });
 
     if (error) {
-      console.error("🚨 SUPABASE REFUSE DE LIRE TES PLAYLISTS :", error.message, error.details, error.hint);
-      alert(`Erreur de lecture de tes playlists : ${error.message}`);
+      console.error("Erreur lecture playlists Supabase :", error);
     } else if (data) {
       setPlaylists(data);
       preloadImages(data); 
@@ -77,14 +82,14 @@ export function PlaylistProvider({ children }: { children: React.ReactNode }) {
     fetchPlaylists();
 
     if (user) {
-      const subscription = supabase
-        .channel('public:playlists')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'playlists' }, payload => {
+      const channel = supabase
+        .channel(`public:playlists:${user.id}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'playlists' }, () => {
           fetchPlaylists();
         })
         .subscribe();
 
-      return () => { supabase.removeChannel(subscription); };
+      return () => { supabase.removeChannel(channel); };
     }
   }, [user, loading]);
 
@@ -100,7 +105,6 @@ export function PlaylistProvider({ children }: { children: React.ReactNode }) {
       created_at: new Date().toISOString()
     };
 
-    // Interface optimiste : on l'affiche tout de suite
     setPlaylists(prev => [tempPlaylist, ...prev]);
 
     if (!user) {
@@ -117,21 +121,19 @@ export function PlaylistProvider({ children }: { children: React.ReactNode }) {
         is_shared: false
       }).select().single();
 
-      // 🟢 DÉTECTEUR DE BLOCAGE POUR LA CRÉATION
       if (error) {
-        console.error("🚨 SUPABASE REFUSE DE SAUVEGARDER :", error.message, error.details);
-        alert(`Supabase a bloqué ta playlist !\nRaison : ${error.message}\nDétails : ${error.details}`);
-        
-        // On annule l'interface optimiste : la playlist disparaît direct sous tes yeux
+        console.error("Erreur création playlist Supabase :", error);
         setPlaylists(prev => prev.filter(p => p.id !== tempPlaylist.id));
-        return; 
+        return null;
       }
 
       if (data) {
         setPlaylists(prev => prev.map(p => p.id === tempPlaylist.id ? data : p));
+        return data;
       }
     } catch (err) {
-      console.error("❌ Crash réseau lors de la sauvegarde :", err);
+      console.error("Crash réseau création playlist :", err);
+      setPlaylists(prev => prev.filter(p => p.id !== tempPlaylist.id));
     }
   };
 
@@ -143,11 +145,16 @@ export function PlaylistProvider({ children }: { children: React.ReactNode }) {
     });
 
     if (user && !id.startsWith("temp-")) {
-      await supabase.from("playlists").update(updates).eq("id", id);
+      const { error } = await supabase.from("playlists").update(updates).eq("id", id);
+      if (error) {
+        console.error("Erreur mise à jour playlist Supabase :", error);
+        fetchPlaylists();
+      }
     }
   };
 
   const deletePlaylist = async (id: string) => {
+    const previous = playlists;
     setPlaylists(prev => {
       const newPlaylists = prev.filter(p => p.id !== id);
       if (!user) localStorage.setItem("my_glass_playlists", JSON.stringify(newPlaylists));
@@ -155,7 +162,11 @@ export function PlaylistProvider({ children }: { children: React.ReactNode }) {
     });
 
     if (user && !id.startsWith("temp-")) {
-      await supabase.from("playlists").delete().eq("id", id);
+      const { error } = await supabase.from("playlists").delete().eq("id", id);
+      if (error) {
+        console.error("Erreur suppression playlist Supabase :", error);
+        setPlaylists(previous);
+      }
     }
   };
 
@@ -191,9 +202,10 @@ export function PlaylistProvider({ children }: { children: React.ReactNode }) {
       updatePlaylist, 
       deletePlaylist, 
       addTrackToPlaylist, 
-      removeTrackFromPlaylist,
-      shareWithFriend,
-      isLoaded 
+      removeTrackFromPlaylist, 
+      shareWithFriend, 
+      isLoaded,
+      refreshPlaylists: fetchPlaylists
     }}>
       {children}
     </PlaylistContext.Provider>
