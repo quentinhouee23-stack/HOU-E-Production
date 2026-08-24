@@ -3,6 +3,8 @@
 
 import React, { createContext, useCallback, useContext, useState, useRef, useEffect, useMemo } from "react";
 import type { Track, PlayerStatus } from "@/types";
+import { supabase } from "@/lib/supabase";
+import { useAuth } from "./AuthContext";
 
 export type SleepMode = "15" | "30" | "45" | "60" | "playlistEnd" | null;
 
@@ -43,6 +45,7 @@ const MusicContext = createContext<MusicContextValue | null>(null);
 const isValidYTId = (id: string | null | undefined) => typeof id === "string" && id.length === 11;
 
 export function MusicProvider({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
   const [isMusicLoaded, setIsMusicLoaded] = useState(false);
   const [currentTrack, setCurrentTrack] = useState<Track | null>(null);
   const [status, setStatus] = useState<PlayerStatus>("idle");
@@ -65,11 +68,31 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   const currentTimeRef = useRef(0);
   const ytCacheRef = useRef<Record<string, string>>({});
   
-  // 🟢 LES VARIABLES QUI MANQUAIENT ET FAISAIENT CRASHER L'APP :
   const repeatModeRef = useRef<"off" | "all" | "one">("off");
   const isShuffleRef = useRef(false);
 
   const playNextRef = useRef<() => void>(() => {});
+
+  // Diffusion du morceau en cours sur le profil Supabase pour les amis
+  const syncLiveToSupabase = useCallback(async (track: Track | null, isPlaying: boolean) => {
+    if (!user) return;
+    try {
+      await supabase
+        .from("profiles")
+        .update({
+          current_listening: isPlaying && track ? {
+            id: track.id,
+            title: track.title,
+            artist: track.artist,
+            image: track.image,
+            updated_at: new Date().toISOString()
+          } : null
+        })
+        .eq("id", user.id);
+    } catch (err) {
+      console.error("Erreur sync live Supabase :", err);
+    }
+  }, [user]);
 
   useEffect(() => {
     try {
@@ -106,6 +129,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
           if (prev === null) return null;
           if (prev <= 1) {
             setStatus("paused");
+            syncLiveToSupabase(null, false);
             setSleepModeState(null);
             sleepModeRef.current = null;
             return null;
@@ -115,7 +139,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       }, 1000);
     }
     return () => clearInterval(interval);
-  }, [status, sleepSeconds]);
+  }, [status, sleepSeconds, syncLiveToSupabase]);
 
   const handleProgress = useCallback((state: any) => {
     currentTimeRef.current = state.playedSeconds || 0;
@@ -150,14 +174,15 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
 
       setPlayingUrl(`/api/stream?videoId=${videoId}&t=${Date.now()}`);
       setStatus("playing");
+      syncLiveToSupabase(track, true);
 
     } catch (error: any) {
       setPlaybackError(error.message);
       setStatus("idle");
-      // Passe au suivant après 2s si ça crash
+      syncLiveToSupabase(null, false);
       setTimeout(() => playNextRef.current(), 2000);
     }
-  }, []);
+  }, [syncLiveToSupabase]);
 
   const playTrack = useCallback(async (track: Track, newQueue?: Track[]) => {
     if (newQueue && newQueue.length > 0) {
@@ -172,7 +197,11 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
 
   const playNext = useCallback(() => {
     const q = queueRef.current;
-    if (q.length === 0) { setStatus("idle"); return; }
+    if (q.length === 0) { 
+      setStatus("idle"); 
+      syncLiveToSupabase(null, false);
+      return; 
+    }
     
     let nextTrack: Track | undefined;
     const currentIndex = q.findIndex(t => t.id === currentTrackIdRef.current);
@@ -187,8 +216,9 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     else {
       setStatus("idle");
       setPlayingUrl(null);
+      syncLiveToSupabase(null, false);
     }
-  }, [loadAndPlayUrl]);
+  }, [loadAndPlayUrl, syncLiveToSupabase]);
 
   useEffect(() => { playNextRef.current = playNext; }, [playNext]);
 
@@ -218,10 +248,16 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const togglePlayPause = useCallback(() => {
-    if (status === "playing") setStatus("paused");
-    else if (!playingUrl && currentTrack) loadAndPlayUrl(currentTrack);
-    else setStatus("playing");
-  }, [status, playingUrl, currentTrack, loadAndPlayUrl]);
+    if (status === "playing") {
+      setStatus("paused");
+      syncLiveToSupabase(null, false);
+    } else if (!playingUrl && currentTrack) {
+      loadAndPlayUrl(currentTrack);
+    } else {
+      setStatus("playing");
+      if (currentTrack) syncLiveToSupabase(currentTrack, true);
+    }
+  }, [status, playingUrl, currentTrack, loadAndPlayUrl, syncLiveToSupabase]);
 
   const seek = useCallback((time: number) => setSeekRequest(time), []);
   const clearSeekRequest = useCallback(() => setSeekRequest(null), []);

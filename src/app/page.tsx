@@ -16,7 +16,7 @@ import {
 import Link from "next/link";
 import { AddToPlaylistModal } from "@/components/ui/AddToPlaylistModal";
 
-// 🟢 Utilitaire pour calculer la date du dernier vendredi à minuit
+// Utilitaire pour calculer la date du dernier vendredi à minuit
 const getMidnightLastFriday = () => {
   const d = new Date();
   const day = d.getDay();
@@ -123,36 +123,79 @@ export default function HomePage() {
     loadReleases();
   }, []);
 
+  // Gestion de l'activité des amis en direct et temps réel
   useEffect(() => {
+    if (!user) {
+      setFriendsActivity([]);
+      return;
+    }
+
     const loadFriendsActivity = async () => {
-      if (!user) return;
-      const { data, error } = await supabase
-        .from('friends')
-        .select(`
-          status,
-          sender:user_id_1 ( id, username, current_listening ),
-          receiver:user_id_2 ( id, username, current_listening )
-        `)
-        .eq('status', 'accepted')
-        .or(`user_id_1.eq.${user.id},user_id_2.eq.${user.id}`);
+      try {
+        const { data: friendships, error } = await supabase
+          .from("friends")
+          .select("user_id_1, user_id_2")
+          .eq("status", "accepted")
+          .or(`user_id_1.eq.${user.id},user_id_2.eq.${user.id}`);
 
-      if (error) return;
-
-      const activity = [];
-      data?.forEach(rel => {
-        if (!rel.sender || !rel.receiver) return;
-        const isSender = rel.sender.id === user.id;
-        const friend = isSender ? rel.receiver : rel.sender;
-        if (friend.current_listening && friend.current_listening.title) {
-          activity.push(friend);
+        if (error || !friendships || friendships.length === 0) {
+          setFriendsActivity([]);
+          return;
         }
-      });
-      setFriendsActivity(activity);
+
+        const friendIds = friendships.map((f) =>
+          f.user_id_1 === user.id ? f.user_id_2 : f.user_id_1
+        );
+
+        const { data: profiles } = await supabase
+          .from("profiles")
+          .select("id, username, avatar_url, current_listening")
+          .in("id", friendIds);
+
+        if (profiles) {
+          setFriendsActivity(
+            profiles.filter((p) => p.current_listening && p.current_listening.title)
+          );
+        }
+      } catch (err) {
+        console.error("Erreur chargement initial amis live :", err);
+      }
     };
 
-    if (user) {
-      loadFriendsActivity();
-    }
+    loadFriendsActivity();
+
+    // Abonnement Realtime Supabase
+    const channel = supabase
+      .channel("realtime:friends_live_feed")
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "profiles"
+        },
+        (payload) => {
+          const updated = payload.new;
+          if (!updated || updated.id === user.id) return;
+
+          setFriendsActivity((prev) => {
+            if (!updated.current_listening || !updated.current_listening.title) {
+              return prev.filter((p) => p.id !== updated.id);
+            }
+
+            const exists = prev.some((p) => p.id === updated.id);
+            if (exists) {
+              return prev.map((p) => (p.id === updated.id ? { ...p, ...updated } : p));
+            }
+            return [updated, ...prev];
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [user]);
 
   useEffect(() => {
@@ -200,7 +243,7 @@ export default function HomePage() {
   const togglePreview = (e, url) => {
     e.stopPropagation(); 
     if (!url) {
-      alert("❌ Aucun extrait de 30s disponible pour ce titre.");
+      alert("Aucun extrait de 30s disponible pour ce titre.");
       return;
     }
     if (previewUrl === url) {
@@ -303,7 +346,6 @@ export default function HomePage() {
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, x: -50 }}
             ref={scrollRef}
             className="flex-1 w-full overflow-y-auto overflow-x-hidden custom-scrollbar px-4 sm:px-6 pt-[calc(env(safe-area-inset-top)+7rem)]"
-            // 🟢 CORRECTION ICI : Ajustement des espaces en bas pour cacher le fond noir
             style={{ paddingBottom: hasMiniPlayer ? '180px' : '140px' }}
           >
             <div className="max-w-5xl mx-auto space-y-10">
@@ -334,9 +376,13 @@ export default function HomePage() {
                     </h2>
                     <div className="flex gap-3 overflow-x-auto pb-2 custom-scrollbar snap-x">
                       {friendsActivity.map((friend, i) => (
-                         <div key={i} className="min-w-[160px] max-w-[200px] bg-white/5 rounded-2xl p-3 flex items-center gap-3 border border-white/5 snap-start hover:bg-white/10 transition-colors">
+                         <div 
+                           key={`friend-live-${friend.id || i}`} 
+                           onClick={() => friend.current_listening && handlePlayFullTrack(friend.current_listening, [friend.current_listening])}
+                           className="min-w-[170px] max-w-[210px] bg-white/5 rounded-2xl p-3 flex items-center gap-3 border border-white/5 snap-start hover:bg-white/10 transition-colors cursor-pointer group"
+                         >
                            <div className="relative w-10 h-10 rounded-full bg-[#1db954]/20 flex items-center justify-center text-[#1db954] font-bold shrink-0 uppercase">
-                             {friend.username.charAt(0)}
+                             {friend.username ? friend.username.charAt(0) : "A"}
                              <Image 
                                src={friend.current_listening.image || "https://api.dicebear.com/7.x/shapes/svg?seed=music"} 
                                alt="" 
@@ -347,7 +393,7 @@ export default function HomePage() {
                            </div>
                            <div className="flex-1 overflow-hidden">
                              <p className="text-[10px] text-[#1db954] font-bold truncate">{friend.username}</p>
-                             <p className="text-xs text-white font-bold truncate">{friend.current_listening.title}</p>
+                             <p className="text-xs text-white font-bold truncate group-hover:text-[#1db954] transition-colors">{friend.current_listening.title}</p>
                              <p className="text-[9px] text-white/50 truncate">{friend.current_listening.artist}</p>
                            </div>
                          </div>
@@ -476,7 +522,6 @@ export default function HomePage() {
                 )}
               </section>
 
-              {/* 🟢 SECTION FIL D'ACTUALITÉ */}
               <section className="mb-8">
                 <div className="flex items-center gap-2 mb-6 border-t border-white/10 pt-8">
                   <h2 className="text-2xl font-black">Fil d'actualité</h2>
@@ -488,7 +533,6 @@ export default function HomePage() {
                 {isLoadingFeed ? (
                   <div className="w-full h-[400px] bg-white/5 rounded-3xl animate-pulse border border-white/5 max-w-sm mx-auto"></div>
                 ) : (
-                  // 🟢 CORRECTION ICI : h-[460px] et mb-8 pour laisser la place en bas
                   <div className="relative w-full max-w-sm mx-auto h-[460px] mb-8 flex items-end justify-center perspective-[1000px]">
                     {newsFeed.map((post, i) => {
                       if (i > 3) return null;
@@ -582,7 +626,7 @@ export default function HomePage() {
                   <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-lg shadow-lg overflow-hidden bg-white/10 flex-shrink-0 z-10 relative flex items-center justify-center">
                     <Image 
                       src={selectedAlbum.image || `https://api.deezer.com/album/${selectedAlbum.id}/image`} 
-                      alt={selectedAlbum.title}
+                      alt={selectedAlbum.title} 
                       fill
                       sizes="(max-width: 640px) 80px, 96px"
                       className="object-cover pointer-events-none" 
