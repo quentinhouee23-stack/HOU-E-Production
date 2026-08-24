@@ -307,7 +307,7 @@ export function LiquidGlassNav() {
           className="fixed left-1/2 -translate-x-1/2 w-[92%] max-w-md z-[100] select-none"
           style={{ 
             // 🟢 COLLÉ TOUT EN BAS COMME APPLE MUSIC (utilisation directe de safe-area sans marge superflue)
-            bottom: "env(safe-area-inset-bottom, 6px)"
+            bottom: "20px"
           }}
         >
           <div
