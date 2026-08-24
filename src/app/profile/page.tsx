@@ -478,7 +478,7 @@ export default function ProfilePage() {
                 exit={{ y: "100%" }}
                 transition={{ type: "spring", damping: 28, stiffness: 300 }}
                 onClick={(e) => e.stopPropagation()}
-                className="relative w-full sm:max-w-md sm:mx-auto bg-[#18181b] rounded-t-[32px] sm:rounded-[32px] flex flex-col border-t sm:border border-white/10 shadow-2xl z-10 max-h-[90dvh] pb-[calc(env(safe-area-inset-bottom)+1.5rem)]"
+                className="relative w-full sm:max-w-md sm:mx-auto bg-[#18181b] rounded-t-[32px] sm:rounded-[32px] flex flex-col border-t sm:border border-white/10 shadow-2xl z-10 h-[75dvh] sm:h-[650px] pb-[calc(env(safe-area-inset-bottom)+1.5rem)]"
               >
                 {/* Indicateur tiroir mobile */}
                 <div className="w-12 h-1.5 bg-white/20 rounded-full mx-auto mt-3 mb-1 shrink-0 sm:hidden" />
@@ -614,11 +614,9 @@ export default function ProfilePage() {
                           </div>
                         )}
                       </div>
-
                     </div>
                   )}
                 </div>
-
               </motion.div>
             </div>
           )}
