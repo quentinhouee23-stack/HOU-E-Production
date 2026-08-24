@@ -43,13 +43,13 @@ export default function LoginPage() {
     }
   };
 
-  // Connexion rapide avec Google
+  // Connexion rapide avec Google (redirige dynamiquement vers l'URL actuelle du site)
   const handleGoogleLogin = async () => {
     try {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: `${window.location.origin}/`,
+          redirectTo: `${window.location.origin}/profile`,
         },
       });
       if (error) throw error;
