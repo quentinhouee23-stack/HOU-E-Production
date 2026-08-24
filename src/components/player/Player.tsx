@@ -47,14 +47,38 @@ export function Player() {
     return match ? match[1] : null;
   };
 
-  // Chargement de l'API YouTube
+  // Déblocage WebKit iOS au premier tap
+  useEffect(() => {
+    const unlockWebKit = () => {
+      if (playerRef.current && isReadyRef.current) {
+        try {
+          playerRef.current.playVideo();
+          if (status !== "playing") {
+            playerRef.current.pauseVideo();
+          }
+        } catch {}
+      }
+      document.removeEventListener("touchstart", unlockWebKit);
+      document.removeEventListener("click", unlockWebKit);
+    };
+
+    document.addEventListener("touchstart", unlockWebKit, { passive: true, once: true });
+    document.addEventListener("click", unlockWebKit, { passive: true, once: true });
+
+    return () => {
+      document.removeEventListener("touchstart", unlockWebKit);
+      document.removeEventListener("click", unlockWebKit);
+    };
+  }, [status]);
+
+  // Initialisation du lecteur
   useEffect(() => {
     if (!isClient) return;
 
     const createPlayer = () => {
-      if (playerRef.current || !document.getElementById("yt-invisible-holder")) return;
+      if (playerRef.current || !document.getElementById("yt-stealth-player")) return;
 
-      playerRef.current = new window.YT.Player("yt-invisible-holder", {
+      playerRef.current = new window.YT.Player("yt-stealth-player", {
         height: "100%",
         width: "100%",
         playerVars: {
@@ -88,9 +112,9 @@ export function Player() {
           onError: (event: any) => {
             console.warn("[YT Player Error]", event.data);
             if (event.data === 150 || event.data === 101) {
-              setPlaybackError("Titre restreint par l'auteur pour la lecture externe");
+              setPlaybackError("Titre indisponible en streaming mobile");
             } else {
-              setPlaybackError(`Erreur lecture (${event.data})`);
+              setPlaybackError(`Erreur de lecture (${event.data})`);
             }
           },
         },
@@ -113,7 +137,7 @@ export function Player() {
     };
   }, [isClient]);
 
-  // Suivi de la progression
+  // Suivi temps de lecture
   useEffect(() => {
     if (status === "playing") {
       progressIntervalRef.current = setInterval(() => {
@@ -131,7 +155,7 @@ export function Player() {
     };
   }, [status, onProgress]);
 
-  // Chargement d'une nouvelle piste
+  // Chargement d'une nouvelle musique
   useEffect(() => {
     const videoId = extractVideoId(playingUrl);
     if (!videoId) return;
@@ -147,7 +171,7 @@ export function Player() {
     }
   }, [playingUrl]);
 
-  // Play / Pause
+  // Contrôles Play / Pause
   useEffect(() => {
     if (!isReadyRef.current || !playerRef.current) return;
 
@@ -158,14 +182,14 @@ export function Player() {
     }
   }, [status]);
 
-  // Volume
+  // Contrôle Volume
   useEffect(() => {
     if (isReadyRef.current && playerRef.current?.setVolume) {
       playerRef.current.setVolume(Math.max(0, Math.min(100, volume * 100)));
     }
   }, [volume]);
 
-  // Barre de progression (seek)
+  // Seek
   useEffect(() => {
     if (seekRequest !== null && isReadyRef.current && playerRef.current?.seekTo) {
       playerRef.current.seekTo(seekRequest, true);
@@ -176,19 +200,21 @@ export function Player() {
   if (!isClient) return null;
 
   return (
+    // Présent dans le DOM pour satisfaire WebKit iOS, mais placé sous l'UI et invisible à l'œil nu
     <div
       style={{
         position: "fixed",
-        top: "-9999px",
-        left: "-9999px",
-        width: "1px",
-        height: "1px",
-        opacity: 0,
+        bottom: 0,
+        left: 0,
+        width: "2px",
+        height: "2px",
+        opacity: 0.01,
         pointerEvents: "none",
-        visibility: "hidden",
+        zIndex: -1,
+        overflow: "hidden",
       }}
     >
-      <div id="yt-invisible-holder" />
+      <div id="yt-stealth-player" />
     </div>
   );
 }
