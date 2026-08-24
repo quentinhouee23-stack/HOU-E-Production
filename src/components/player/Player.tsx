@@ -3,6 +3,14 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useMusic } from "@/context/MusicContext";
 
+// Liste de secours d'instances Piped qui acceptent les requêtes navigateur (CORS)
+const PIPED_INSTANCES = [
+  "https://pipedapi.kavin.rocks",
+  "https://pipedapi.smnz.de",
+  "https://api.piped.privacydev.net",
+  "https://pipedapi.tokhmi.xyz"
+];
+
 export function Player() {
   const {
     playingUrl,
@@ -24,12 +32,11 @@ export function Player() {
     setIsClient(true);
   }, []);
 
-  // 1. DÉVERROUILLAGE iOS : Obligatoire pour autoriser la lecture asynchrone
+  // 1. DÉVERROUILLAGE iOS
   useEffect(() => {
     const unlockAudio = () => {
       const audio = audioRef.current;
       if (audio && !isAudioUnlocked.current) {
-        // Lecture d'un micro-fichier silencieux au premier tap de l'utilisateur
         audio.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
         audio.play().then(() => {
           audio.pause();
@@ -49,7 +56,7 @@ export function Player() {
     };
   }, []);
 
-  // 2. EXTRACTION ID ET FLUX DIRECT
+  // 2. EXTRACTION ET RÉSOLUTION DU FLUX AUDIO
   const isDirectAudio = (url: string | null): boolean => {
     if (!url) return false;
     return url.endsWith(".mp3") || url.endsWith(".m4a") || url.includes("dzcdn.net") || url.includes("audio-preview");
@@ -62,68 +69,63 @@ export function Player() {
     return match ? match[1] : null;
   };
 
-  // Appel direct à Cobalt depuis le client (contourne Vercel et les blocages IP)
-  const fetchCobaltStream = async (videoId: string) => {
-    try {
-      const res = await fetch("https://api.cobalt.tools/api/json", {
-        method: "POST",
-        headers: {
-          "Accept": "application/json",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          url: `https://www.youtube.com/watch?v=${videoId}`,
-          isAudioOnly: true,
-          aFormat: "mp3", // Format universel iPhone / PC
-        }),
-      });
-      
-      const data = await res.json();
-      return data.url || null;
-    } catch (error) {
-      console.error("[Cobalt Fetch Error]", error);
-      return null;
+  const getAudioStream = async (videoId: string) => {
+    for (const instance of PIPED_INSTANCES) {
+      try {
+        const res = await fetch(`${instance}/streams/${videoId}`);
+        if (!res.ok) continue;
+        
+        const data = await res.json();
+        const audioStreams = data.audioStreams || [];
+        
+        // On privilégie le format M4A/MP4, parfait pour Safari iOS et PC
+        const bestAudio = audioStreams.find((s: any) => s.mimeType?.includes("audio/mp4")) || audioStreams[0];
+        
+        if (bestAudio?.url) return bestAudio.url;
+      } catch (e) {
+        continue; // Si l'instance est HS, on passe à la suivante
+      }
     }
+    return null;
   };
 
-  // 3. LOGIQUE DE LECTURE
+  // 3. LOGIQUE DE LECTURE (S'exécute au changement de titre)
   useEffect(() => {
     const loadAndPlay = async () => {
       const audio = audioRef.current;
       if (!audio || !playingUrl) return;
 
       audio.pause();
-      
-      let finalStreamUrl = playingUrl;
+      let finalUrl = playingUrl;
 
-      // Si c'est un morceau YouTube, on le convertit en MP3 direct via Cobalt
+      // Si c'est un lien YouTube, on récupère le flux direct M4A en arrière-plan
       if (!isDirectAudio(playingUrl)) {
         const videoId = extractVideoId(playingUrl);
         if (!videoId) return;
-        
-        const mp3Url = await fetchCobaltStream(videoId);
-        if (!mp3Url) {
-          setPlaybackError("Impossible de générer le flux audio.");
+
+        const streamUrl = await getAudioStream(videoId);
+        if (!streamUrl) {
+          setPlaybackError("Les serveurs audio sont temporairement surchargés.");
           return;
         }
-        finalStreamUrl = mp3Url;
+        finalUrl = streamUrl;
       }
 
-      audio.src = finalStreamUrl;
+      audio.src = finalUrl;
       audio.load();
 
       if (status === "playing") {
         audio.play().catch((err) => {
-          console.warn("[Autoplay iOS bloqué, attente interaction]", err);
-          setPlaybackError("Appuyez sur Play pour lancer (sécurité iOS)");
+          console.warn("[Autoplay bloqué par iOS]", err);
+          setPlaybackError("Appuyez sur Play pour lancer la musique");
         });
       }
     };
 
     loadAndPlay();
-  }, [playingUrl]); // S'exécute uniquement au changement de musique
+  }, [playingUrl]);
 
-  // 4. CONTRÔLES (Play / Pause / Volume / Seek)
+  // 4. CONTRÔLES BASIQUES (Play, Pause, Volume, Barre de temps)
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
@@ -158,7 +160,7 @@ export function Player() {
         if (d && isFinite(d)) onDuration(d);
       }}
       onEnded={onEnded}
-      onError={() => setPlaybackError("Erreur de flux réseau.")}
+      onError={() => setPlaybackError("Erreur de réseau : flux audio interrompu")}
       style={{ display: "none" }}
     />
   );
