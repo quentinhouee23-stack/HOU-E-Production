@@ -24,17 +24,15 @@ export function Player() {
   } = useMusic();
 
   const [isClient, setIsClient] = useState(false);
-  const [needsTouchUnlock, setNeedsTouchUnlock] = useState(false);
   const playerRef = useRef<any>(null);
   const progressIntervalRef = useRef<any>(null);
   const isReadyRef = useRef(false);
-  const targetVideoIdRef = useRef<string | null>(null);
+  const pendingVideoIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     setIsClient(true);
   }, []);
 
-  // Extraction robuste de l'ID vidéo (11 caractères)
   const extractVideoId = (input: string | null): string | null => {
     if (!input) return null;
     if (input.length === 11 && !input.includes("/") && !input.includes("?")) {
@@ -49,18 +47,18 @@ export function Player() {
     return match ? match[1] : null;
   };
 
-  // 1. Initialisation de l'API YouTube dès le chargement initial
+  // Chargement de l'API YouTube
   useEffect(() => {
     if (!isClient) return;
 
-    const init = () => {
-      if (playerRef.current || !document.getElementById("yt-player-container")) return;
+    const createPlayer = () => {
+      if (playerRef.current || !document.getElementById("yt-invisible-holder")) return;
 
-      playerRef.current = new window.YT.Player("yt-player-container", {
+      playerRef.current = new window.YT.Player("yt-invisible-holder", {
         height: "100%",
         width: "100%",
         playerVars: {
-          autoplay: 0,
+          autoplay: 1,
           controls: 0,
           disablekb: 1,
           fs: 0,
@@ -72,18 +70,15 @@ export function Player() {
         events: {
           onReady: () => {
             isReadyRef.current = true;
-            if (targetVideoIdRef.current && status === "playing") {
-              tryPlayVideo(targetVideoIdRef.current);
+            if (pendingVideoIdRef.current) {
+              playerRef.current.loadVideoById(pendingVideoIdRef.current);
             }
           },
           onStateChange: (event: any) => {
-            // 0 = Ended
             if (event.data === 0) {
               onEnded();
             }
-            // 1 = Playing
             if (event.data === 1) {
-              setNeedsTouchUnlock(false);
               const dur = playerRef.current.getDuration();
               if (dur && isFinite(dur)) {
                 onDuration(dur);
@@ -91,11 +86,11 @@ export function Player() {
             }
           },
           onError: (event: any) => {
-            console.warn("[YouTube Player error]:", event.data);
+            console.warn("[YT Player Error]", event.data);
             if (event.data === 150 || event.data === 101) {
-              setPlaybackError("Titre bloqué par le label pour l'intégration mobile.");
+              setPlaybackError("Titre restreint par l'auteur pour la lecture externe");
             } else {
-              setPlaybackError(`Erreur lecture YouTube (code ${event.data})`);
+              setPlaybackError(`Erreur lecture (${event.data})`);
             }
           },
         },
@@ -103,13 +98,13 @@ export function Player() {
     };
 
     if (window.YT && window.YT.Player) {
-      init();
+      createPlayer();
     } else {
-      window.onYouTubeIframeAPIReady = init;
+      window.onYouTubeIframeAPIReady = createPlayer;
       if (!document.querySelector('script[src*="youtube.com/iframe_api"]')) {
-        const tag = document.createElement("script");
-        tag.src = "https://www.youtube.com/iframe_api";
-        document.body.appendChild(tag);
+        const script = document.createElement("script");
+        script.src = "https://www.youtube.com/iframe_api";
+        document.body.appendChild(script);
       }
     }
 
@@ -118,57 +113,7 @@ export function Player() {
     };
   }, [isClient]);
 
-  // Fonction pour lancer la vidéo en gérant les restrictions iOS
-  const tryPlayVideo = (id: string) => {
-    if (!playerRef.current || !isReadyRef.current) return;
-
-    try {
-      playerRef.current.loadVideoById(id);
-      const playPromise = playerRef.current.playVideo();
-      if (playPromise && typeof playPromise.catch === "function") {
-        playPromise.catch(() => {
-          // L'autoplay asynchrone a été bloqué par Safari
-          setNeedsTouchUnlock(true);
-        });
-      }
-    } catch {
-      setNeedsTouchUnlock(true);
-    }
-  };
-
-  // 2. Réaction au changement de morceau
-  useEffect(() => {
-    const videoId = extractVideoId(playingUrl);
-    if (!videoId) return;
-
-    targetVideoIdRef.current = videoId;
-
-    if (isReadyRef.current) {
-      if (status === "playing") {
-        tryPlayVideo(videoId);
-      } else {
-        playerRef.current?.cueVideoById(videoId);
-      }
-    }
-  }, [playingUrl]);
-
-  // 3. Play / Pause
-  useEffect(() => {
-    if (!isReadyRef.current || !playerRef.current) return;
-
-    if (status === "playing") {
-      try {
-        playerRef.current.playVideo?.();
-      } catch {
-        setNeedsTouchUnlock(true);
-      }
-    } else if (status === "paused") {
-      playerRef.current.pauseVideo?.();
-      setNeedsTouchUnlock(false);
-    }
-  }, [status]);
-
-  // 4. Suivi de progression
+  // Suivi de la progression
   useEffect(() => {
     if (status === "playing") {
       progressIntervalRef.current = setInterval(() => {
@@ -186,7 +131,41 @@ export function Player() {
     };
   }, [status, onProgress]);
 
-  // 5. Seek
+  // Chargement d'une nouvelle piste
+  useEffect(() => {
+    const videoId = extractVideoId(playingUrl);
+    if (!videoId) return;
+
+    pendingVideoIdRef.current = videoId;
+
+    if (!isReadyRef.current || !playerRef.current?.loadVideoById) return;
+
+    if (status === "playing") {
+      playerRef.current.loadVideoById(videoId);
+    } else {
+      playerRef.current.cueVideoById(videoId);
+    }
+  }, [playingUrl]);
+
+  // Play / Pause
+  useEffect(() => {
+    if (!isReadyRef.current || !playerRef.current) return;
+
+    if (status === "playing") {
+      playerRef.current.playVideo?.();
+    } else if (status === "paused") {
+      playerRef.current.pauseVideo?.();
+    }
+  }, [status]);
+
+  // Volume
+  useEffect(() => {
+    if (isReadyRef.current && playerRef.current?.setVolume) {
+      playerRef.current.setVolume(Math.max(0, Math.min(100, volume * 100)));
+    }
+  }, [volume]);
+
+  // Barre de progression (seek)
   useEffect(() => {
     if (seekRequest !== null && isReadyRef.current && playerRef.current?.seekTo) {
       playerRef.current.seekTo(seekRequest, true);
@@ -194,62 +173,22 @@ export function Player() {
     }
   }, [seekRequest, clearSeekRequest]);
 
-  // Déblocage explicite si iOS a bloqué l'autoplay après l'appel API async
-  const handleManualUnlock = () => {
-    if (playerRef.current) {
-      if (targetVideoIdRef.current) {
-        playerRef.current.loadVideoById(targetVideoIdRef.current);
-      }
-      playerRef.current.playVideo();
-      setNeedsTouchUnlock(false);
-    }
-  };
-
   if (!isClient) return null;
 
   return (
-    <>
-      {/* Conteneur Iframe YouTube visible pour valider WebKit iOS */}
-      <div
-        style={{
-          position: "fixed",
-          bottom: "90px",
-          right: "12px",
-          width: "140px",
-          height: "80px",
-          borderRadius: "8px",
-          overflow: "hidden",
-          boxShadow: "0 4px 14px rgba(0,0,0,0.5)",
-          zIndex: 40,
-          backgroundColor: "#000",
-        }}
-      >
-        <div id="yt-player-container" style={{ width: "100%", height: "100%" }} />
-      </div>
-
-      {/* Bouton de secours iOS (apparaît uniquement si Safari refuse l'autoplay async) */}
-      {needsTouchUnlock && (
-        <div
-          style={{
-            position: "fixed",
-            bottom: "180px",
-            left: "50%",
-            transform: "translateX(-50%)",
-            backgroundColor: "#22c55e",
-            color: "#fff",
-            padding: "10px 18px",
-            borderRadius: "9999px",
-            fontWeight: 600,
-            fontSize: "14px",
-            boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
-            cursor: "pointer",
-            zIndex: 100,
-          }}
-          onClick={handleManualUnlock}
-        >
-          ▶ Appuyer pour démarrer l’audio sur iPhone
-        </div>
-      )}
-    </>
+    <div
+      style={{
+        position: "fixed",
+        top: "-9999px",
+        left: "-9999px",
+        width: "1px",
+        height: "1px",
+        opacity: 0,
+        pointerEvents: "none",
+        visibility: "hidden",
+      }}
+    >
+      <div id="yt-invisible-holder" />
+    </div>
   );
 }
