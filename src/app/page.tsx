@@ -8,7 +8,7 @@ import { usePlaylists } from "@/context/PlaylistContext";
 import { useMusic } from "@/context/MusicContext";
 import { useAuth } from "@/context/AuthContext";
 import { supabase } from "@/lib/supabase";
-import { motion, AnimatePresence, useAnimation } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { 
   Calendar, Flame, Disc3, ListMusic, Play, PlayCircle, 
   PauseCircle, Plus, ArrowLeft, Clock, ExternalLink, Newspaper, Music, Radio, Mic2, Link2
@@ -303,12 +303,12 @@ export default function HomePage() {
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, x: -50 }}
             ref={scrollRef}
             className="flex-1 w-full overflow-y-auto overflow-x-hidden custom-scrollbar px-4 sm:px-6 pt-[calc(env(safe-area-inset-top)+7rem)]"
-            style={{ paddingBottom: hasMiniPlayer ? '160px' : '100px' }}
+            // 🟢 CORRECTION ICI : Ajustement des espaces en bas pour cacher le fond noir
+            style={{ paddingBottom: hasMiniPlayer ? '180px' : '140px' }}
           >
             <div className="max-w-5xl mx-auto space-y-10">
               <section>
                 
-                {/* 🟢 Le bouton magique est ici, aligné avec le "Bonjour" */}
                 <div className="flex items-center justify-between mb-6">
                   <motion.h1 
                     initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} 
@@ -488,7 +488,8 @@ export default function HomePage() {
                 {isLoadingFeed ? (
                   <div className="w-full h-[400px] bg-white/5 rounded-3xl animate-pulse border border-white/5 max-w-sm mx-auto"></div>
                 ) : (
-                  <div className="relative w-full max-w-sm mx-auto h-[420px] flex items-end justify-center perspective-[1000px]">
+                  // 🟢 CORRECTION ICI : h-[460px] et mb-8 pour laisser la place en bas
+                  <div className="relative w-full max-w-sm mx-auto h-[460px] mb-8 flex items-end justify-center perspective-[1000px]">
                     {newsFeed.map((post, i) => {
                       if (i > 3) return null;
 
@@ -512,7 +513,7 @@ export default function HomePage() {
                           drag={isFront ? "x" : false}
                           dragConstraints={{ left: 0, right: 0 }}
                           onDragEnd={handleDragEnd}
-                          className={`absolute w-full h-[380px] rounded-3xl overflow-hidden shadow-[0_10px_30px_rgba(0,0,0,0.8)] border border-white/10 ${cardGradient} ${isFront ? 'cursor-grab active:cursor-grabbing' : ''}`}
+                          className={`absolute w-full h-[400px] rounded-3xl overflow-hidden shadow-[0_10px_30px_rgba(0,0,0,0.8)] border border-white/10 ${cardGradient} ${isFront ? 'cursor-grab active:cursor-grabbing' : ''}`}
                         >
                           {getWatermarkIcon(styleId)}
 
