@@ -1,34 +1,32 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import ytdl from "@distube/ytdl-core";
 
-export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-const PIPED_API = "https://pipedapi.kavin.rocks";
-
-export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const videoId = searchParams.get("videoId");
+export async function GET(request: NextRequest) {
+  const videoId = request.nextUrl.searchParams.get("videoId");
 
   if (!videoId) {
-    return NextResponse.json({ error: "videoId manquant" }, { status: 400 });
+    return new NextResponse("Video ID manquant", { status: 400 });
   }
 
   try {
-    const res = await fetch(`${PIPED_API}/streams/${videoId}`, {
-      headers: { "User-Agent": "Mozilla/5.0" },
-      next: { revalidate: 3600 },
-    });
+    const url = `https://www.youtube.com/watch?v=${videoId}`;
+    
+    // Récupérer les informations de la vidéo pour trouver le meilleur format audio
+    const info = await ytdl.getInfo(url);
+    const format = ytdl.chooseFormat(info.formats, { quality: "highestaudio" });
 
-    if (res.ok) {
-      const data = await res.json();
-      const audioStreams = data.audioStreams || [];
-      const bestAudio = audioStreams.find((s: any) => s.format === "M4A" || s.mimeType?.includes("audio/mp4")) || audioStreams[0];
-
-      if (bestAudio?.url) {
-        return NextResponse.redirect(bestAudio.url, 302);
-      }
+    if (!format || !format.url) {
+      return new NextResponse("Flux audio introuvable", { status: 404 });
     }
-  } catch {}
 
-  // Fallback direct format Invidious
-  return NextResponse.redirect(`https://yt.artemislena.eu/latest_version?id=${videoId}&itag=140`, 302);
+    // On redirige silencieusement le lecteur audio vers l'URL brute du serveur de Google
+    // Cette URL est valide pour l'IP qui la demande pendant quelques heures
+    return NextResponse.redirect(format.url, 302);
+    
+  } catch (error) {
+    console.error("[Stream API Error]", error);
+    return new NextResponse("Erreur d'extraction", { status: 500 });
+  }
 }
