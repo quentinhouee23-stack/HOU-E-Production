@@ -9,6 +9,7 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { Edit2, Check, X, Clock, TrendingUp, LogOut, Users, UserPlus, Search as SearchIcon, UserCheck } from "lucide-react";
 
+// LE RIDEAU D'ANIMATION (Se lève au chargement de la page)
 function PageRevealVeil() {
   const [show, setShow] = useState(true);
 
@@ -485,7 +486,7 @@ export default function ProfilePage() {
                 exit={{ y: "100%" }}
                 transition={{ type: "spring", damping: 28, stiffness: 300 }}
                 onClick={(e) => e.stopPropagation()}
-                className="fixed bottom-0 left-0 right-0 max-w-lg mx-auto bg-[#1c1c1e] rounded-t-[32px] flex flex-col border-t border-white/10 shadow-2xl z-10 h-[80vh] pb-[calc(env(safe-area-inset-bottom)+1.5rem)]"
+                className="absolute bottom-0 left-0 right-0 w-full max-w-lg mx-auto bg-[#1c1c1e] rounded-t-[32px] flex flex-col border-t border-white/10 shadow-2xl z-10 h-[80vh]"
               >
                 <div className="w-12 h-1.5 bg-white/20 rounded-full mx-auto mt-3 mb-1 shrink-0" />
 
@@ -514,7 +515,7 @@ export default function ProfilePage() {
                   </button>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-4 custom-scrollbar overscroll-contain">
+                <div className="flex-1 overflow-y-auto p-4 pb-[calc(env(safe-area-inset-bottom)+2rem)] custom-scrollbar overscroll-contain">
                   {activeTab === "search" && (
                     <div className="space-y-4">
                       <div className="relative">
