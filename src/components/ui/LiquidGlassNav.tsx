@@ -10,7 +10,7 @@ import GlassSurface from "./GlassSurface";
 
 // ─── Nav items ────────────────────────────────────────────────────────────────
 const NAV_ITEMS = [
-  { href: "/",      label: "Accueil",    Icon: Home,      isSearch: false },
+  { href: "/",       label: "Accueil",     Icon: Home,      isSearch: false },
   { href: "/discover",  label: "Découverte", Icon: Compass,   isSearch: false },
   { href: "/playlists", label: "Playlists",  Icon: ListMusic, isSearch: false },
   { href: "/search",    label: "Recherche",  Icon: Search,    isSearch: true  },
@@ -139,13 +139,12 @@ export function LiquidGlassNav() {
     if (!vv) return;
     
     const handleResize = () => {
-      // Si l'écran visible perd plus de 150px d'un coup, c'est le clavier qui vient de sortir
       const isKeyboardActive = window.innerHeight - vv.height > 150;
       setIsKeyboardOpen(isKeyboardActive);
     };
 
     vv.addEventListener("resize", handleResize);
-    handleResize(); // Init immédiate
+    handleResize();
     
     return () => vv.removeEventListener("resize", handleResize);
   }, []);
@@ -299,7 +298,6 @@ export function LiquidGlassNav() {
 
   return (
     <AnimatePresence>
-      {/* 🟢 Si la barre est visible ET que le clavier est fermé, on l'affiche */}
       {isVisible && !isKeyboardOpen && (
         <motion.nav
           initial={{ y: 120, opacity: 0 }}
@@ -308,16 +306,15 @@ export function LiquidGlassNav() {
           transition={{ type: "spring", stiffness: 370, damping: 32 }}
           className="fixed left-1/2 -translate-x-1/2 w-[92%] max-w-md z-[100] select-none"
           style={{ 
-            // 🟢 CORRECTION DE L'ESPACEMENT POUR iPHONE : 
-            // Ajoute automatiquement la marge du "Home Indicator" sans jamais déborder
-            bottom: "calc(16px + env(safe-area-inset-bottom, 0px))"
+            // 🟢 COLLÉ TOUT EN BAS COMME APPLE MUSIC (utilisation directe de safe-area sans marge superflue)
+            bottom: "env(safe-area-inset-bottom, 6px)"
           }}
         >
           <div
             aria-hidden
             style={{
-              position:     "absolute",
-              inset:        0,
+              position:    "absolute",
+              inset:       0,
               borderRadius: "9999px",
               transform:    "scaleX(1.05) scaleY(1.4) translateY(10px)",
               filter:       "blur(20px)",
@@ -347,7 +344,7 @@ export function LiquidGlassNav() {
                   transition={PILL_SPRING}
                   className="absolute rounded-full border border-white/10 bg-white/5 shadow-[inset_0_1px_0_rgba(255,255,255,0.1),0_0_15px_rgba(29,185,84,0.1)] z-30 pointer-events-none"
                   style={{
-                    x:     smoothDragX,
+                    x:    smoothDragX,
                     width: 72,
                     height:48,
                     top:   8,
