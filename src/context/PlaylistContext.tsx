@@ -39,6 +39,22 @@ export function PlaylistProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
+    // Récupération directe des playlists
+    const { data, error } = await supabase
+      .from("playlists")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("Erreur lecture playlists Supabase :", error);
+    } else if (data) {
+      setPlaylists(data);
+      preloadImages(data); 
+    }
+    
+    setIsLoaded(true);
+  };
+
     // Migration du local vers Supabase
     const saved = localStorage.getItem("my_glass_playlists");
     if (saved) {
