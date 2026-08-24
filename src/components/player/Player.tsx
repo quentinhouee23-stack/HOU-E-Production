@@ -10,14 +10,6 @@ declare global {
   }
 }
 
-// Serveurs relais pour contourner les musiques bloquées par les labels
-const AUDIO_RELAYS = [
-  "https://vid.puffyan.us",
-  "https://inv.tux.pizza",
-  "https://invidious.flokinet.to",
-  "https://invidious.nerdvpn.de"
-];
-
 export function Player() {
   const {
     playingUrl,
@@ -32,7 +24,7 @@ export function Player() {
   } = useMusic();
 
   const [isClient, setIsClient] = useState(false);
-  const [fallback, setFallback] = useState({ url: "", active: false, index: 0 });
+  const [fallbackStreamUrl, setFallbackStreamUrl] = useState<string | null>(null);
   
   const audioRef = useRef<HTMLAudioElement>(null);
   const ytPlayerRef = useRef<any>(null);
@@ -40,11 +32,16 @@ export function Player() {
   const isUnlockedRef = useRef(false);
   const progressIntervalRef = useRef<any>(null);
 
-  useEffect(() => {
-    setIsClient(true);
-  }, []);
+  // Utilisation de Refs pour éviter les "stale closures" dans l'API YouTube
+  const playingUrlRef = useRef(playingUrl);
+  const statusRef = useRef(status);
+  const setPlaybackErrorRef = useRef(setPlaybackError);
 
-  // Détection des formats natifs
+  useEffect(() => { playingUrlRef.current = playingUrl; }, [playingUrl]);
+  useEffect(() => { statusRef.current = status; }, [status]);
+  useEffect(() => { setPlaybackErrorRef.current = setPlaybackError; }, [setPlaybackError]);
+  useEffect(() => { setIsClient(true); }, []);
+
   const isDirectAudio = (url: string | null) => {
     if (!url) return false;
     return url.includes(".mp3") || url.includes(".m4a") || url.includes("preview") || url.includes("dzcdn.net");
@@ -57,18 +54,15 @@ export function Player() {
     return m ? m[1] : null;
   };
 
-  // 1. Réinitialisation du lecteur à chaque changement de piste
-  useEffect(() => {
-    setFallback({ url: playingUrl || "", active: false, index: 0 });
-  }, [playingUrl]);
-
-  // 2. Déverrouillage iOS global
+  // 1. Déverrouillage IOS : initialisation silencieuse au premier contact
   useEffect(() => {
     const unlock = () => {
       if (isUnlockedRef.current) return;
       if (audioRef.current) {
-        audioRef.current.play().catch(() => {});
-        audioRef.current.pause();
+        audioRef.current.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
+        audioRef.current.play().then(() => {
+          audioRef.current?.pause();
+        }).catch(() => {});
       }
       if (ytReadyRef.current && ytPlayerRef.current && ytPlayerRef.current.playVideo) {
         try {
@@ -86,7 +80,32 @@ export function Player() {
     return () => events.forEach(e => document.removeEventListener(e, unlock));
   }, []);
 
-  // 3. Initialisation YouTube
+  // 2. Résolveur de flux de secours pour les musiques bloquées (comme Calvin Harris)
+  const resolveFallbackStream = async (videoId: string): Promise<string | null> => {
+    const PIPED_APIS = [
+      "https://pipedapi.kavin.rocks",
+      "https://pipedapi.smnz.de",
+      "https://pipedapi.adminforge.de",
+      "https://piped-api.lunar.icu"
+    ];
+
+    for (const api of PIPED_APIS) {
+      try {
+        const res = await fetch(`${api}/streams/${videoId}`);
+        if (!res.ok) continue;
+        const data = await res.json();
+        const audioStreams = data.audioStreams || [];
+        // On récupère le format natif MP4/M4A idéal pour WebKit (iOS) et PC
+        const bestAudio = audioStreams.find((s: any) => s.mimeType?.includes("audio/mp4")) || audioStreams[0];
+        if (bestAudio?.url) return bestAudio.url;
+      } catch (e) {
+        console.warn(`Le relais API ${api} a échoué, essai du suivant...`);
+      }
+    }
+    return `https://inv.tux.pizza/latest_version?id=${videoId}&itag=140`;
+  };
+
+  // 3. Initialisation de l'API Iframe YouTube
   useEffect(() => {
     if (!isClient) return;
 
@@ -101,13 +120,9 @@ export function Player() {
           onReady: () => {
             ytReadyRef.current = true;
             ytPlayerRef.current.setVolume(Math.max(0, Math.min(100, volume * 100)));
-            // Si une musique attend d'être lancée
-            if (fallback.url && !fallback.active && !isDirectAudio(fallback.url)) {
-              const id = getYTId(fallback.url);
-              if (id) {
-                ytPlayerRef.current.loadVideoById(id);
-                if (status === "playing") ytPlayerRef.current.playVideo();
-              }
+            const id = getYTId(playingUrlRef.current);
+            if (id && statusRef.current === "playing") {
+              ytPlayerRef.current.loadVideoById(id);
             }
           },
           onStateChange: (e: any) => {
@@ -117,13 +132,20 @@ export function Player() {
               if (d && isFinite(d)) onDuration(d);
             }
           },
-          onError: (e: any) => {
-            // ERREUR 150/101 : Titre bloqué par le label. On active automatiquement le relais audio de secours !
+          onError: async (e: any) => {
+            // ERREUR 150 : Titre bloqué (ex: Calvin Harris). On extrait le flux audio via Piped.
             if (e.data === 150 || e.data === 101) {
-              console.warn("Titre bloqué par les droits d'auteur, bascule sur les serveurs relais...");
-              setFallback(prev => ({ ...prev, active: true, index: 0 }));
+              const currentId = getYTId(playingUrlRef.current);
+              if (currentId) {
+                const streamUrl = await resolveFallbackStream(currentId);
+                if (streamUrl) {
+                  setFallbackStreamUrl(streamUrl); // Déclenche le plan de secours natif
+                } else {
+                  if (setPlaybackErrorRef.current) setPlaybackErrorRef.current("Le titre est strictement protégé par le label de l'artiste.");
+                }
+              }
             } else {
-              setPlaybackError(`Erreur vidéo YouTube (${e.data})`);
+              if (setPlaybackErrorRef.current) setPlaybackErrorRef.current(`Erreur source vidéo (${e.data})`);
             }
           }
         }
@@ -141,63 +163,45 @@ export function Player() {
         document.body.appendChild(s);
       }
     }
-  }, [isClient, volume]); // eslint-disable-line
+  }, [isClient]);
 
-  // 4. Chargement & Aiguillage Automatique
+  // 4. Gestion du changement de musique principal
   useEffect(() => {
-    if (!fallback.url) return;
-    
-    if (isDirectAudio(fallback.url) || fallback.active) {
-      // Moteur Natif HTML5 (Aperçus OU Fallback Relais)
-      if (ytReadyRef.current && ytPlayerRef.current?.pauseVideo) {
-        ytPlayerRef.current.pauseVideo();
-      }
-      
-      if (audioRef.current) {
-        let targetSrc = fallback.url;
-        if (fallback.active) {
-          const id = getYTId(fallback.url);
-          targetSrc = `${AUDIO_RELAYS[fallback.index]}/latest_version?id=${id}&itag=140`;
-        }
+    setFallbackStreamUrl(null); // On reset le plan de secours quand on change de titre
+    if (!playingUrl) return;
 
-        if (audioRef.current.src !== targetSrc) {
-          audioRef.current.src = targetSrc;
-          audioRef.current.load();
-          if (status === "playing") {
-            audioRef.current.play().catch(() => {});
-          }
-        }
+    if (isDirectAudio(playingUrl)) {
+      if (ytReadyRef.current && ytPlayerRef.current?.pauseVideo) ytPlayerRef.current.pauseVideo();
+      if (audioRef.current && audioRef.current.src !== playingUrl) {
+        audioRef.current.src = playingUrl;
+        audioRef.current.load();
       }
     } else {
-      // Moteur YouTube Officiel
       if (audioRef.current) audioRef.current.pause();
-      
-      const videoId = getYTId(fallback.url);
+      const videoId = getYTId(playingUrl);
       if (videoId && ytReadyRef.current && ytPlayerRef.current?.loadVideoById) {
         const currentUrl = ytPlayerRef.current.getVideoUrl?.() || "";
         if (!currentUrl.includes(videoId)) {
           ytPlayerRef.current.loadVideoById(videoId);
         }
-        if (status === "playing") ytPlayerRef.current.playVideo();
       }
     }
-  }, [fallback, status]);
+  }, [playingUrl]);
 
-  // 5. Gestion des pannes de relais (si la musique de secours plante)
-  const handleAudioError = () => {
-    if (fallback.active) {
-      if (fallback.index + 1 < AUDIO_RELAYS.length) {
-        setFallback(prev => ({ ...prev, index: prev.index + 1 })); // Passe au serveur suivant
-      } else {
-        if (setPlaybackError) setPlaybackError("Musique strictement protégée et serveurs de secours pleins.");
-      }
-    }
-  };
-
-  // 6. Play/Pause
+  // 5. Activation du flux audio de secours (Fallback)
   useEffect(() => {
-    if (!fallback.url) return;
-    if (isDirectAudio(fallback.url) || fallback.active) {
+    if (fallbackStreamUrl && audioRef.current) {
+      if (ytReadyRef.current && ytPlayerRef.current?.pauseVideo) {
+        ytPlayerRef.current.pauseVideo(); // On coupe l'iframe définitivement pour ce titre
+      }
+      audioRef.current.src = fallbackStreamUrl;
+      audioRef.current.load();
+    }
+  }, [fallbackStreamUrl]);
+
+  // 6. Synchronisation Play / Pause globale
+  useEffect(() => {
+    if (isDirectAudio(playingUrl) || fallbackStreamUrl) {
       if (status === "playing") audioRef.current?.play().catch(() => {});
       else if (status === "paused") audioRef.current?.pause();
     } else {
@@ -205,13 +209,13 @@ export function Player() {
       if (status === "playing") ytPlayerRef.current?.playVideo?.();
       else if (status === "paused") ytPlayerRef.current?.pauseVideo?.();
     }
-  }, [status, fallback]);
+  }, [status, playingUrl, fallbackStreamUrl]);
 
-  // 7. Progression, Volume et Seek
+  // 7. Suivi du temps de progression
   useEffect(() => {
     if (status === "playing") {
       progressIntervalRef.current = setInterval(() => {
-        if (isDirectAudio(fallback.url) || fallback.active) {
+        if (isDirectAudio(playingUrl) || fallbackStreamUrl) {
           if (audioRef.current) onProgress({ playedSeconds: audioRef.current.currentTime || 0 });
         } else {
           if (ytReadyRef.current && ytPlayerRef.current?.getCurrentTime) {
@@ -221,8 +225,9 @@ export function Player() {
       }, 500);
     }
     return () => clearInterval(progressIntervalRef.current);
-  }, [status, fallback, onProgress]);
+  }, [status, playingUrl, fallbackStreamUrl]);
 
+  // 8. Volume
   useEffect(() => {
     if (audioRef.current) audioRef.current.volume = Math.max(0, Math.min(1, volume));
     if (ytReadyRef.current && ytPlayerRef.current?.setVolume) {
@@ -230,22 +235,23 @@ export function Player() {
     }
   }, [volume]);
 
+  // 9. Barre de recherche (Seek)
   useEffect(() => {
     if (seekRequest !== null) {
-      if (isDirectAudio(fallback.url) || fallback.active) {
+      if (isDirectAudio(playingUrl) || fallbackStreamUrl) {
         if (audioRef.current) audioRef.current.currentTime = seekRequest;
       } else if (ytReadyRef.current && ytPlayerRef.current?.seekTo) {
         ytPlayerRef.current.seekTo(seekRequest, true);
       }
       clearSeekRequest();
     }
-  }, [seekRequest, fallback, clearSeekRequest]);
+  }, [seekRequest, fallbackStreamUrl, playingUrl]);
 
   if (!isClient) return null;
 
   return (
     <>
-      <audio ref={audioRef} playsInline preload="auto" onEnded={onEnded} onError={handleAudioError} style={{ display: "none" }} />
+      <audio ref={audioRef} playsInline preload="auto" onEnded={onEnded} style={{ display: "none" }} />
       <div
         style={{
           position: "fixed",
