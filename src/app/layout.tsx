@@ -14,7 +14,6 @@ import { OrientationLock } from "@/components/ui/OrientationLock";
 import { NetworkStatus } from "@/components/ui/NetworkStatus"; 
 import { AnimationProvider } from "@/components/ui/AnimationProvider"; 
 import "./globals.css";
-import { ServerWakeUp } from "@/components/ServerWakeUp";
 
 const plusJakarta = Plus_Jakarta_Sans({
   variable: "--font-sans", 
@@ -33,7 +32,6 @@ export const metadata: Metadata = {
   icons: {
     icon: "/logo.png",
     shortcut: "/logo.png",
-    // 🟢 CORRECTION ICI : On force iOS à utiliser une image dédiée, carrée et sans transparence
     apple: [
       { url: "/apple-icon.png", sizes: "180x180", type: "image/png" },
     ],
@@ -86,7 +84,6 @@ export default function RootLayout({
             </PlaylistProvider>
           </MusicProvider>
         </AuthProvider>
-        <ServerWakeUp />
       </body>
     </html>
   );
