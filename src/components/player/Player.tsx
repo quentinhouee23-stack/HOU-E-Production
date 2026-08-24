@@ -24,6 +24,7 @@ export function Player() {
   } = useMusic();
 
   const [isClient, setIsClient] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
   const playerRef = useRef<any>(null);
   const progressIntervalRef = useRef<any>(null);
   const isReadyRef = useRef(false);
@@ -47,14 +48,13 @@ export function Player() {
     return match ? match[1] : null;
   };
 
-  // 1. Initialisation de l'Iframe YouTube officielle
   useEffect(() => {
     if (!isClient) return;
 
     const setupPlayer = () => {
-      if (playerRef.current || !document.getElementById("yt-universal-audio")) return;
+      if (playerRef.current || !document.getElementById("yt-frame")) return;
 
-      playerRef.current = new window.YT.Player("yt-universal-audio", {
+      playerRef.current = new window.YT.Player("yt-frame", {
         height: "100%",
         width: "100%",
         playerVars: {
@@ -80,20 +80,26 @@ export function Player() {
           onStateChange: (event: any) => {
             // 0 = Terminé
             if (event.data === 0) {
+              setIsPlaying(false);
               onEnded();
             }
-            // 1 = En cours de lecture
+            // 1 = En lecture
             if (event.data === 1) {
+              setIsPlaying(true);
               const dur = playerRef.current.getDuration();
               if (dur && isFinite(dur)) {
                 onDuration(dur);
               }
             }
+            // 2 = En pause
+            if (event.data === 2) {
+              setIsPlaying(false);
+            }
           },
           onError: (event: any) => {
             console.warn("[YT Error]:", event.data);
             if (event.data === 150 || event.data === 101) {
-              setPlaybackError("Titre protégé contre la lecture externe");
+              setPlaybackError("Titre bloqué par les droits d'auteur sur mobile");
             } else {
               setPlaybackError(`Erreur lecture (${event.data})`);
             }
@@ -118,7 +124,7 @@ export function Player() {
     };
   }, [isClient]);
 
-  // 2. Intervalle de suivi de progression
+  // Progression
   useEffect(() => {
     if (status === "playing") {
       progressIntervalRef.current = setInterval(() => {
@@ -136,7 +142,7 @@ export function Player() {
     };
   }, [status, onProgress]);
 
-  // 3. Changement de morceau
+  // Changement de piste
   useEffect(() => {
     const videoId = extractVideoId(playingUrl);
     if (!videoId) return;
@@ -152,7 +158,7 @@ export function Player() {
     }
   }, [playingUrl]);
 
-  // 4. Play / Pause
+  // Play / Pause
   useEffect(() => {
     if (!isReadyRef.current || !playerRef.current) return;
 
@@ -163,14 +169,14 @@ export function Player() {
     }
   }, [status]);
 
-  // 5. Volume
+  // Volume
   useEffect(() => {
     if (isReadyRef.current && playerRef.current?.setVolume) {
       playerRef.current.setVolume(Math.max(0, Math.min(100, volume * 100)));
     }
   }, [volume]);
 
-  // 6. Progression (Seek)
+  // Seek
   useEffect(() => {
     if (seekRequest !== null && isReadyRef.current && playerRef.current?.seekTo) {
       playerRef.current.seekTo(seekRequest, true);
@@ -178,22 +184,39 @@ export function Player() {
     }
   }, [seekRequest, clearSeekRequest]);
 
+  // Déblocage tactile direct pour iOS
+  const handleDirectPlay = () => {
+    if (playerRef.current) {
+      if (pendingIdRef.current) {
+        playerRef.current.loadVideoById(pendingIdRef.current);
+      }
+      playerRef.current.playVideo();
+    }
+  };
+
   if (!isClient) return null;
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        bottom: 0,
-        left: 0,
-        width: "1px",
-        height: "1px",
-        opacity: 0.01,
-        pointerEvents: "none",
-        zIndex: -1,
-      }}
-    >
-      <div id="yt-universal-audio" />
-    </div>
+    <>
+      {/* Conteneur Iframe : dimensionné à 100% mais rendu discret sous les éléments */}
+      <div
+        style={{
+          position: "fixed",
+          bottom: "75px",
+          left: "8px",
+          width: "48px",
+          height: "48px",
+          borderRadius: "6px",
+          overflow: "hidden",
+          opacity: isPlaying ? 0.05 : 0.9,
+          zIndex: 30,
+          pointerEvents: isPlaying ? "none" : "auto",
+          transition: "opacity 0.2s ease",
+        }}
+        onClick={handleDirectPlay}
+      >
+        <div id="yt-frame" style={{ width: "100%", height: "100%" }} />
+      </div>
+    </>
   );
 }
