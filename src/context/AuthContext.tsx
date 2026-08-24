@@ -85,6 +85,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem("playlists");
     localStorage.removeItem("my_glass_playlists");
 
+    // 🔴 LA CORRECTION EST ICI : On vide l'état immédiatement pour éviter l'effet boomerang
+    setUser(null);
+    setSession(null);
+
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
   };
