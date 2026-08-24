@@ -452,27 +452,26 @@ export default function HomePage() {
                 </div>
                 
                 {isLoadingReleases ? (
-                  <div className="flex gap-4 overflow-x-hidden pb-4">
+                  <div className="flex gap-4 overflow-x-auto pb-4">
                     {[1, 2, 3, 4].map(n => (
-                      <div key={n} className="min-w-[140px] sm:min-w-[160px] aspect-square rounded-2xl bg-white/5 animate-pulse"></div>
+                      <div key={n} className="min-w-[140px] sm:min-w-[160px] aspect-square rounded-2xl bg-white/5 animate-pulse shrink-0"></div>
                     ))}
                   </div>
-                ) : (
+                ) : releases.length > 0 ? (
                   <div className="flex gap-4 overflow-x-auto pb-4 custom-scrollbar snap-x">
                     {releases.map((album, i) => (
                       <motion.div 
                         initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.1 }}
-                        key={`release-${album.id}-${i}`} 
+                        key={`release-${album.id || i}`} 
                         onClick={() => viewAlbum(album)}
-                        className="min-w-[140px] sm:min-w-[160px] snap-start group cursor-pointer flex flex-col"
+                        className="min-w-[140px] sm:min-w-[160px] snap-start group cursor-pointer flex flex-col shrink-0"
                       >
                         <div className="relative aspect-square rounded-2xl overflow-hidden mb-3 shadow-lg bg-gradient-to-br from-white/10 to-white/5">
-                          
                           {album.status === "new" && (
                             <>
                               <Image 
                                 src={album.image || "https://api.dicebear.com/7.x/shapes/svg?seed=music"} 
-                                alt={album.title} 
+                                alt={album.title || "Album"} 
                                 fill
                                 sizes="(max-width: 640px) 140px, 160px"
                                 className="object-cover group-hover:scale-105 transition-transform duration-500" 
@@ -506,7 +505,6 @@ export default function HomePage() {
                               {album.genre}
                             </span>
                           )}
-                          
                           {album.status === "new" && (
                             <p className="text-[10px] text-white/40 flex items-center gap-1 font-medium">
                               <Calendar className="w-3 h-3" /> Sorti le {album.date}
@@ -515,6 +513,10 @@ export default function HomePage() {
                         </div>
                       </motion.div>
                     ))}
+                  </div>
+                ) : (
+                  <div className="bg-white/5 border border-white/10 rounded-2xl p-6 text-center">
+                    <p className="text-white/50 text-sm">Aucune sortie disponible pour le moment.</p>
                   </div>
                 )}
               </section>
