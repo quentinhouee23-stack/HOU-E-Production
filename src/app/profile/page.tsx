@@ -6,10 +6,10 @@ import { Header } from "@/components/ui/Header";
 import { useAuth } from "@/context/AuthContext";
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
-import { motion, AnimatePresence } from "framer-motion"; // 🟢 LayoutGroup retiré d'ici
+import { motion, AnimatePresence } from "framer-motion";
 import { Edit2, Check, X, Clock, TrendingUp, LogOut, Users, UserPlus, Search as SearchIcon, UserCheck } from "lucide-react";
 
-// ─── LE RIDEAU D'ANIMATION (Se lève au chargement de la page) ─────────────
+// LE RIDEAU D'ANIMATION (Se lève au chargement de la page)
 function PageRevealVeil() {
   const [show, setShow] = useState(true);
 
@@ -40,7 +40,7 @@ function PageRevealVeil() {
   );
 }
 
-// ─── PAGE PROFIL PRINCIPALE ───────────────────────────────────────────────
+// PAGE PROFIL PRINCIPALE
 export default function ProfilePage() {
   const { user, signOut } = useAuth();
   const router = useRouter();
@@ -66,11 +66,9 @@ export default function ProfilePage() {
 
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
-  // 🟢 ASTUCE MAGIQUE : On détruit le layoutId après l'arrivée pour empêcher l'animation de retour
   const [avatarLayoutId, setAvatarLayoutId] = useState<string | undefined>("profile-avatar");
 
   useEffect(() => {
-    // Après 1.5s, l'avatar perd sa liaison avec le Header. En quittant la page, il n'y aura aucune animation.
     const timer = setTimeout(() => {
       setAvatarLayoutId(undefined);
     }, 1500);
@@ -312,7 +310,6 @@ export default function ProfilePage() {
           
           <section className="flex flex-col items-center text-center space-y-4 pt-4">
             
-            {/* 🟢 AVATAR CONNECTÉ À L'ENTRÉE UNIQUEMENT */}
             <motion.div 
               layoutId={avatarLayoutId}
               transition={{ type: "spring", stiffness: 200, damping: 25 }}
@@ -327,7 +324,6 @@ export default function ProfilePage() {
                </span>
             </motion.div>
 
-            {/* 🟢 Le fondu pour le reste du header du profil */}
             <motion.div 
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
@@ -376,7 +372,6 @@ export default function ProfilePage() {
             </motion.div>
           </section>
 
-          {/* 🟢 Le fondu pour le reste du contenu (stats etc) */}
           <motion.div 
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
@@ -468,166 +463,167 @@ export default function ProfilePage() {
         <AnimatePresence>
           {/* MODALE D'AMIS */}
           {showFriends && (
-            <>
+            <div className="fixed inset-0 z-[9999] flex flex-col justify-end">
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 onClick={closeFriendsModal}
-                className="fixed inset-0 z-[9998] bg-black/80 backdrop-blur-md"
+                className="absolute inset-0 bg-black/80 backdrop-blur-md"
               />
 
-              <div className="fixed inset-x-0 bottom-0 top-12 z-[9999] pointer-events-none flex flex-col justify-end sm:justify-center sm:items-center">
-                <motion.div
-                  initial={{ y: "100%" }}
-                  animate={{ y: 0 }}
-                  exit={{ y: "100%" }}
-                  transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                  onClick={(e) => e.stopPropagation()}
-                  className="w-full sm:max-w-md bg-[#1c1c1e] rounded-t-[32px] sm:rounded-[32px] flex flex-col border-t sm:border border-white/10 shadow-2xl pointer-events-auto h-[85%] sm:h-[700px]"
-                >
-                  {/* Header */}
-                  <div className="flex items-center justify-between p-6 border-b border-white/5 shrink-0">
-                    <h2 className="text-2xl font-black text-white">Social</h2>
-                    <button
-                      onClick={closeFriendsModal}
-                      className="w-10 h-10 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center transition-colors"
-                    >
-                      <X className="w-5 h-5 text-white" />
-                    </button>
-                  </div>
+              <motion.div
+                initial={{ y: "100%" }}
+                animate={{ y: 0 }}
+                exit={{ y: "100%" }}
+                transition={{ type: "spring", damping: 28, stiffness: 300 }}
+                onClick={(e) => e.stopPropagation()}
+                className="relative w-full sm:max-w-md sm:mx-auto bg-[#18181b] rounded-t-[32px] sm:rounded-[32px] flex flex-col border-t sm:border border-white/10 shadow-2xl z-10 max-h-[90dvh] pb-[calc(env(safe-area-inset-bottom)+1.5rem)]"
+              >
+                {/* Indicateur tiroir mobile */}
+                <div className="w-12 h-1.5 bg-white/20 rounded-full mx-auto mt-3 mb-1 shrink-0 sm:hidden" />
 
-                  {/* Tabs */}
-                  <div className="flex border-b border-white/5 shrink-0">
-                    <button
-                      onClick={() => setActiveTab("friends")}
-                      className={`flex-1 py-4 text-sm font-bold transition-colors ${activeTab === 'friends' ? 'text-[#1db954] border-b-2 border-[#1db954]' : 'text-white/50 hover:text-white'}`}
-                    >
-                      Mes Amis ({myFriends.length})
-                    </button>
-                    <button
-                      onClick={() => setActiveTab("search")}
-                      className={`flex-1 py-4 text-sm font-bold transition-colors ${activeTab === 'search' ? 'text-[#1db954] border-b-2 border-[#1db954]' : 'text-white/50 hover:text-white'}`}
-                    >
-                      Ajouter
-                    </button>
-                  </div>
+                {/* Header */}
+                <div className="flex items-center justify-between p-6 border-b border-white/5 shrink-0">
+                  <h2 className="text-2xl font-black text-white">Social</h2>
+                  <button
+                    onClick={closeFriendsModal}
+                    className="w-10 h-10 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center transition-colors"
+                  >
+                    <X className="w-5 h-5 text-white" />
+                  </button>
+                </div>
 
-                  {/* Scrollable content */}
-                  <div className="flex-1 overflow-y-auto p-4 pb-12 custom-scrollbar overscroll-contain">
-                    {activeTab === "search" && (
-                      <div className="space-y-4">
-                        <div className="relative">
-                          <SearchIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/40" />
-                          <input
-                            type="text"
-                            placeholder="Chercher un pseudo..."
-                            value={friendSearch}
-                            onChange={(e) => setFriendSearch(e.target.value)}
-                            className="w-full bg-white/5 border border-white/10 rounded-2xl py-3 pl-12 pr-4 text-white outline-none focus:border-[#1db954] transition-colors"
-                          />
-                        </div>
+                {/* Tabs */}
+                <div className="flex border-b border-white/5 shrink-0">
+                  <button
+                    onClick={() => setActiveTab("friends")}
+                    className={`flex-1 py-4 text-sm font-bold transition-colors ${activeTab === 'friends' ? 'text-[#1db954] border-b-2 border-[#1db954]' : 'text-white/50 hover:text-white'}`}
+                  >
+                    Mes Amis ({myFriends.length})
+                  </button>
+                  <button
+                    onClick={() => setActiveTab("search")}
+                    className={`flex-1 py-4 text-sm font-bold transition-colors ${activeTab === 'search' ? 'text-[#1db954] border-b-2 border-[#1db954]' : 'text-white/50 hover:text-white'}`}
+                  >
+                    Ajouter
+                  </button>
+                </div>
 
-                        <div className="space-y-2 mt-4">
-                          {searchResults?.map(result => {
-                            const isFriend = myFriends.some(f => f.id === result.id);
-                            const hasSent = sentRequests.some(f => f.id === result.id);
-                            const hasPending = pendingRequests.some(f => f.id === result.id);
-
-                            return (
-                              <div key={result.id} className="flex items-center gap-3 p-3 bg-white/5 rounded-2xl border border-white/5">
-                                <div className="w-10 h-10 rounded-full bg-[#1db954]/20 flex items-center justify-center text-[#1db954] font-bold shrink-0 uppercase">
-                                   {result.username.charAt(0)}
-                                </div>
-                                <span className="flex-1 font-bold text-white truncate">{result.username}</span>
-                                
-                                {isFriend ? (
-                                  <span className="text-xs text-white/50 flex items-center gap-1"><UserCheck className="w-4 h-4"/> Amis</span>
-                                ) : hasSent ? (
-                                  <span className="text-xs text-[#1db954] bg-[#1db954]/10 px-3 py-1.5 rounded-full font-bold">Envoyé</span>
-                                ) : hasPending ? (
-                                  <button onClick={() => acceptFriendRequest(pendingRequests.find(p => p.id === result.id).relId)} className="bg-[#1db954] text-black text-xs font-bold px-4 py-2 rounded-full">Accepter</button>
-                                ) : (
-                                  <button onClick={() => sendFriendRequest(result.id)} className="bg-white/10 hover:bg-white/20 transition-colors text-white text-xs font-bold px-4 py-2 rounded-full flex items-center gap-1">
-                                    <UserPlus className="w-4 h-4" /> Ajouter
-                                  </button>
-                                )}
-                              </div>
-                            );
-                          })}
-                          {friendSearch.length >= 2 && searchResults.length === 0 && (
-                            <p className="text-center text-white/50 text-sm py-4">Aucun utilisateur trouvé.</p>
-                          )}
-                        </div>
+                {/* Scrollable content */}
+                <div className="flex-1 overflow-y-auto p-4 custom-scrollbar overscroll-contain">
+                  {activeTab === "search" && (
+                    <div className="space-y-4">
+                      <div className="relative">
+                        <SearchIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/40" />
+                        <input
+                          type="text"
+                          placeholder="Chercher un pseudo..."
+                          value={friendSearch}
+                          onChange={(e) => setFriendSearch(e.target.value)}
+                          className="w-full bg-white/5 border border-white/10 rounded-2xl py-3 pl-12 pr-4 text-white outline-none focus:border-[#1db954] transition-colors"
+                        />
                       </div>
-                    )}
 
-                    {activeTab === "friends" && (
-                      <div className="space-y-6">
-                        {pendingRequests.length > 0 && (
-                          <div>
-                            <h3 className="text-xs font-bold uppercase tracking-widest text-white/40 mb-3">Demandes reçues ({pendingRequests.length})</h3>
-                            <div className="space-y-2">
-                              {pendingRequests.map(req => (
-                                <div key={req.id} className="flex items-center gap-3 p-3 bg-[#1db954]/10 rounded-2xl border border-[#1db954]/20">
-                                  <div className="w-10 h-10 rounded-full bg-[#1db954]/30 flex items-center justify-center text-[#1db954] font-bold shrink-0 uppercase">
-                                     {req.username.charAt(0)}
-                                  </div>
-                                  <span className="flex-1 font-bold text-white truncate">{req.username}</span>
-                                  <button onClick={() => acceptFriendRequest(req.relId)} className="bg-[#1db954] text-black w-8 h-8 flex items-center justify-center rounded-full hover:scale-105 transition-transform">
-                                    <Check className="w-4 h-4" />
-                                  </button>
-                                  <button onClick={() => removeFriend(req.relId)} className="bg-red-500/20 text-red-500 w-8 h-8 flex items-center justify-center rounded-full hover:bg-red-500/40 transition-colors">
-                                    <X className="w-4 h-4" />
-                                  </button>
+                      <div className="space-y-2 mt-4">
+                        {searchResults?.map(result => {
+                          const isFriend = myFriends.some(f => f.id === result.id);
+                          const hasSent = sentRequests.some(f => f.id === result.id);
+                          const hasPending = pendingRequests.some(f => f.id === result.id);
+
+                          return (
+                            <div key={result.id} className="flex items-center gap-3 p-3 bg-white/5 rounded-2xl border border-white/5">
+                              <div className="w-10 h-10 rounded-full bg-[#1db954]/20 flex items-center justify-center text-[#1db954] font-bold shrink-0 uppercase">
+                                 {result.username.charAt(0)}
+                              </div>
+                              <span className="flex-1 font-bold text-white truncate">{result.username}</span>
+                              
+                              {isFriend ? (
+                                <span className="text-xs text-white/50 flex items-center gap-1"><UserCheck className="w-4 h-4"/> Amis</span>
+                              ) : hasSent ? (
+                                <span className="text-xs text-[#1db954] bg-[#1db954]/10 px-3 py-1.5 rounded-full font-bold">Envoyé</span>
+                              ) : hasPending ? (
+                                <button onClick={() => acceptFriendRequest(pendingRequests.find(p => p.id === result.id).relId)} className="bg-[#1db954] text-black text-xs font-bold px-4 py-2 rounded-full">Accepter</button>
+                              ) : (
+                                <button onClick={() => sendFriendRequest(result.id)} className="bg-white/10 hover:bg-white/20 transition-colors text-white text-xs font-bold px-4 py-2 rounded-full flex items-center gap-1">
+                                  <UserPlus className="w-4 h-4" /> Ajouter
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
+                        {friendSearch.length >= 2 && searchResults.length === 0 && (
+                          <p className="text-center text-white/50 text-sm py-4">Aucun utilisateur trouvé.</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {activeTab === "friends" && (
+                    <div className="space-y-6">
+                      {pendingRequests.length > 0 && (
+                        <div>
+                          <h3 className="text-xs font-bold uppercase tracking-widest text-white/40 mb-3">Demandes reçues ({pendingRequests.length})</h3>
+                          <div className="space-y-2">
+                            {pendingRequests.map(req => (
+                              <div key={req.id} className="flex items-center gap-3 p-3 bg-[#1db954]/10 rounded-2xl border border-[#1db954]/20">
+                                <div className="w-10 h-10 rounded-full bg-[#1db954]/30 flex items-center justify-center text-[#1db954] font-bold shrink-0 uppercase">
+                                   {req.username.charAt(0)}
                                 </div>
-                              ))}
+                                <span className="flex-1 font-bold text-white truncate">{req.username}</span>
+                                <button onClick={() => acceptFriendRequest(req.relId)} className="bg-[#1db954] text-black w-8 h-8 flex items-center justify-center rounded-full hover:scale-105 transition-transform">
+                                  <Check className="w-4 h-4" />
+                                </button>
+                                <button onClick={() => removeFriend(req.relId)} className="bg-red-500/20 text-red-500 w-8 h-8 flex items-center justify-center rounded-full hover:bg-red-500/40 transition-colors">
+                                  <X className="w-4 h-4" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      <div>
+                        {pendingRequests.length > 0 && <h3 className="text-xs font-bold uppercase tracking-widest text-white/40 mb-3">Ma liste</h3>}
+                        
+                        {myFriends.length === 0 ? (
+                          <div className="flex flex-col items-center justify-center py-10 text-center opacity-50 space-y-4">
+                            <Users className="w-12 h-12 text-[#1db954]" />
+                            <div>
+                              <p className="font-bold text-lg text-white">Aucun ami ajouté</p>
+                              <p className="text-sm">Va dans l'onglet "Ajouter" pour trouver ta famille.</p>
                             </div>
                           </div>
-                        )}
-
-                        <div>
-                          {pendingRequests.length > 0 && <h3 className="text-xs font-bold uppercase tracking-widest text-white/40 mb-3">Ma liste</h3>}
-                          
-                          {myFriends.length === 0 ? (
-                            <div className="flex flex-col items-center justify-center py-10 text-center opacity-50 space-y-4">
-                              <Users className="w-12 h-12 text-[#1db954]" />
-                              <div>
-                                <p className="font-bold text-lg text-white">Aucun ami ajouté</p>
-                                <p className="text-sm">Va dans l'onglet "Ajouter" pour trouver ta famille.</p>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="space-y-2">
-                              {myFriends.map(friend => (
-                                <div key={friend.id} className="flex items-center gap-3 p-3 bg-white/5 rounded-2xl border border-white/5 group">
-                                  <div className="w-12 h-12 rounded-full bg-[#1db954]/20 flex items-center justify-center text-[#1db954] font-bold text-xl shrink-0 uppercase">
-                                      {friend.username.charAt(0)}
-                                  </div>
-                                  <span className="flex-1 font-bold text-white truncate">{friend.username}</span>
-                                  <button 
-                                    onClick={() => { if(window.confirm(`Supprimer ${friend.username} ?`)) removeFriend(friend.relId); }} 
-                                    className="opacity-0 group-hover:opacity-100 bg-red-500/20 text-red-500 w-8 h-8 flex items-center justify-center rounded-full hover:bg-red-500/40 transition-all"
-                                    title="Supprimer"
-                                  >
-                                    <X className="w-4 h-4" />
-                                  </button>
+                        ) : (
+                          <div className="space-y-2">
+                            {myFriends.map(friend => (
+                              <div key={friend.id} className="flex items-center gap-3 p-3 bg-white/5 rounded-2xl border border-white/5 group">
+                                <div className="w-12 h-12 rounded-full bg-[#1db954]/20 flex items-center justify-center text-[#1db954] font-bold text-xl shrink-0 uppercase">
+                                    {friend.username.charAt(0)}
                                 </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-
+                                <span className="flex-1 font-bold text-white truncate">{friend.username}</span>
+                                <button 
+                                  onClick={() => { if(window.confirm(`Supprimer ${friend.username} ?`)) removeFriend(friend.relId); }} 
+                                  className="opacity-0 group-hover:opacity-100 bg-red-500/20 text-red-500 w-8 h-8 flex items-center justify-center rounded-full hover:bg-red-500/40 transition-all"
+                                  title="Supprimer"
+                                >
+                                  <X className="w-4 h-4" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
 
-                </motion.div>
-              </div>
-            </>
+                    </div>
+                  )}
+                </div>
+
+              </motion.div>
+            </div>
           )}
 
-          {/* 🟢 MODALE DE DÉCONNEXION STYLÉE */}
+          {/* MODALE DE DÉCONNEXION */}
           {showLogoutConfirm && (
             <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 backdrop-blur-md px-4">
               <motion.div
