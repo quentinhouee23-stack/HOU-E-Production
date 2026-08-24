@@ -21,8 +21,9 @@ export async function GET(request: Request) {
     const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`;
     const res = await fetch(searchUrl, {
       headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8",
       },
     });
 
@@ -38,7 +39,6 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ videoId });
   } catch (error: any) {
-    console.error("[youtube-search-error]:", error);
     return NextResponse.json(
       { error: `Erreur recherche: ${error.message || "inconnue"}` },
       { status: 500 }
