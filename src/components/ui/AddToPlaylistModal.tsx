@@ -13,7 +13,6 @@ export function AddToPlaylistModal({ track, isOpen, onClose }) {
   const [canClose, setCanClose] = useState(false);
   const [activeTrack, setActiveTrack] = useState(null);
 
-  // 🟢 On sauvegarde le son localement pour éviter un crash visuel à la fermeture
   useEffect(() => {
     if (track) setActiveTrack(track);
   }, [track]);
@@ -21,11 +20,11 @@ export function AddToPlaylistModal({ track, isOpen, onClose }) {
   useEffect(() => {
     if (isOpen) {
       setCanClose(false);
-      // 🟢 BOUCLIER DE 700ms (Bloque tous les clics fantômes des téléphones lents)
+      // 🟢 BOUCLIER DE 700ms : Protège la fermeture MAIS AUSSI les ajouts accidentels !
       const timer = setTimeout(() => setCanClose(true), 700);
       return () => clearTimeout(timer);
     } else {
-      setNewPlaylistName(""); // Nettoie l'input quand on ferme
+      setNewPlaylistName(""); 
     }
   }, [isOpen]);
 
@@ -34,6 +33,9 @@ export function AddToPlaylistModal({ track, isOpen, onClose }) {
   };
 
   const handleAddToExisting = (playlistId) => {
+    // 🛡️ ANTI GHOST-CLICK : On ignore le clic s'il arrive trop vite
+    if (!canClose) return; 
+
     const targetPlaylist = playlists?.find((p) => p.id === playlistId);
     if (targetPlaylist) {
       const currentTracks = targetPlaylist.tracks || [];
@@ -45,6 +47,9 @@ export function AddToPlaylistModal({ track, isOpen, onClose }) {
   };
 
   const handleCreateNew = async () => {
+    // 🛡️ ANTI GHOST-CLICK
+    if (!canClose) return; 
+    
     if (!newPlaylistName.trim() || !activeTrack) return;
     try {
       await createPlaylist(newPlaylistName.trim(), [activeTrack]);
@@ -71,7 +76,7 @@ export function AddToPlaylistModal({ track, isOpen, onClose }) {
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           className="fixed inset-0 z-[9999] flex flex-col justify-end"
-          style={{ touchAction: 'none' }} // Empêche le scroll fantôme derrière
+          style={{ touchAction: 'none' }}
           onClick={(e) => {
             if (e.target === e.currentTarget) safeClose();
           }}
@@ -79,9 +84,10 @@ export function AddToPlaylistModal({ track, isOpen, onClose }) {
           <div className="absolute inset-0 bg-black/80 backdrop-blur-sm pointer-events-none" />
 
           <motion.div
-            initial={{ y: "100%" }}
-            animate={{ y: "0%" }}
-            exit={{ y: "100%" }}
+            // 🟢 FORCE LA MODALE À VENIR TOUT EN BAS (100vh au lieu de 100%)
+            initial={{ y: "100vh" }}
+            animate={{ y: 0 }}
+            exit={{ y: "100vh" }}
             transition={{ type: "spring", damping: 28, stiffness: 300 }}
             className="relative z-10 w-full max-w-lg mx-auto bg-[#1c1c1e] rounded-t-[32px] flex flex-col shadow-2xl p-6 pb-[calc(env(safe-area-inset-bottom)+2rem)]"
             style={{ maxHeight: "85dvh" }}
@@ -134,7 +140,10 @@ export function AddToPlaylistModal({ track, isOpen, onClose }) {
             <div className="shrink-0 border-t border-white/10 pt-6">
               <p className="text-sm font-bold text-white/70 mb-3">Nouvelle playlist :</p>
               <div className="flex gap-2">
+                {/* 🟢 Ajout de id et name pour nettoyer la console */}
                 <input
+                  id="playlist-name-input"
+                  name="playlist-name-input"
                   type="text"
                   value={newPlaylistName}
                   onChange={(e) => setNewPlaylistName(e.target.value)}
