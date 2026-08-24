@@ -144,18 +144,19 @@ export default function ProfilePage() {
     setLastWeekTracks(safeJSONParse("lastWeekTopTracks", []));
   };
 
-  const fetchFriends = async () => {
-    if (!user) return;
+  // 🟢 FIX 2 : On passe l'ID de l'utilisateur explicitement pour éviter la désynchronisation au login
+  const fetchFriends = async (currentUserId = user?.id) => {
+    if (!currentUserId) return;
 
     try {
       const { data: relations, error } = await supabase
         .from('friends')
         .select('id, status, user_id_1, user_id_2')
-        .or(`user_id_1.eq.${user.id},user_id_2.eq.${user.id}`);
+        .or(`user_id_1.eq.${currentUserId},user_id_2.eq.${currentUserId}`);
 
       if (error || !relations) return;
 
-      const otherUserIds = relations.map(r => r.user_id_1 === user.id ? r.user_id_2 : r.user_id_1);
+      const otherUserIds = relations.map(r => r.user_id_1 === currentUserId ? r.user_id_2 : r.user_id_1);
 
       if (otherUserIds.length === 0) {
         setMyFriends([]);
@@ -176,7 +177,7 @@ export default function ProfilePage() {
       const sent = [];
 
       relations.forEach(rel => {
-        const isSender = rel.user_id_1 === user.id;
+        const isSender = rel.user_id_1 === currentUserId;
         const targetId = isSender ? rel.user_id_2 : rel.user_id_1;
         const profile = profilesMap.get(targetId) || { id: targetId, username: "Utilisateur" };
 
@@ -215,7 +216,8 @@ export default function ProfilePage() {
         username: currentName
       });
       
-      fetchFriends();
+      // On passe l'ID directement au premier chargement
+      fetchFriends(user.id);
     };
 
     loadProfile();
@@ -486,7 +488,8 @@ export default function ProfilePage() {
                 exit={{ y: "100%" }}
                 transition={{ type: "spring", damping: 28, stiffness: 300 }}
                 onClick={(e) => e.stopPropagation()}
-                className="absolute bottom-0 left-0 right-0 w-full max-w-lg mx-auto bg-[#1c1c1e] rounded-t-[32px] flex flex-col border-t border-white/10 shadow-2xl z-10 h-[80vh]"
+                className="absolute bottom-0 left-0 right-0 w-full max-w-lg mx-auto bg-[#1c1c1e] rounded-t-[32px] flex flex-col border-t border-white/10 shadow-2xl z-10"
+                style={{ height: "85dvh" }}
               >
                 <div className="w-12 h-1.5 bg-white/20 rounded-full mx-auto mt-3 mb-1 shrink-0" />
 
@@ -515,7 +518,7 @@ export default function ProfilePage() {
                   </button>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-4 pb-[calc(env(safe-area-inset-bottom)+2rem)] custom-scrollbar overscroll-contain">
+                <div className="flex-1 overflow-y-auto p-4 pb-[calc(env(safe-area-inset-bottom)+2rem)] custom-scrollbar overscroll-contain relative z-20 bg-[#1c1c1e]">
                   {activeTab === "search" && (
                     <div className="space-y-4">
                       <div className="relative">
@@ -621,6 +624,9 @@ export default function ProfilePage() {
                     </div>
                   )}
                 </div>
+
+                {/* 🟢 FIX 1 : LE BLOC MAGIQUE POUR IOS (Cache le trou d'espace safe-area-bottom) */}
+                <div className="absolute top-full left-0 right-0 h-40 bg-[#1c1c1e] z-10" />
               </motion.div>
             </div>
           )}
