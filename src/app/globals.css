@@ -206,7 +206,7 @@ img {
 }
 
 .main-content-padding {
-  padding-bottom: calc(10rem + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(6rem + env(safe-area-inset-bottom, 0px));
 }
 
 .dark {
