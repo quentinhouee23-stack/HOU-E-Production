@@ -3,14 +3,12 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useMusic } from "@/context/MusicContext";
 
-// Serveurs relais Invidious publics configurés pour proxy l'audio directement
-const AUDIO_RELAYS = [
-  "https://vid.puffyan.us",
-  "https://inv.tux.pizza",
-  "https://invidious.flokinet.to",
-  "https://invidious.nerdvpn.de",
-  "https://invidious.slipfox.xyz"
-];
+declare global {
+  interface Window {
+    YT: any;
+    onYouTubeIframeAPIReady: () => void;
+  }
+}
 
 export function Player() {
   const {
@@ -26,11 +24,18 @@ export function Player() {
   } = useMusic();
 
   const [isClient, setIsClient] = useState(false);
-  const [relayIndex, setRelayIndex] = useState(0);
+  const [isMobile, setIsMobile] = useState(false);
+  
   const audioRef = useRef<HTMLAudioElement>(null);
+  const ytPlayerRef = useRef<any>(null);
+  const ytReadyRef = useRef(false);
   const isUnlockedRef = useRef(false);
+  const progressIntervalRef = useRef<any>(null);
 
-  useEffect(() => setIsClient(true), []);
+  useEffect(() => {
+    setIsClient(true);
+    setIsMobile(/iPhone|iPad|iPod|Android/i.test(navigator.userAgent));
+  }, []);
 
   const isDirectAudio = (url: string | null) => {
     if (!url) return false;
@@ -44,108 +49,202 @@ export function Player() {
     return m ? m[1] : null;
   };
 
-  // 1. Déverrouillage iOS
+  // 1. Déverrouillage strict
   useEffect(() => {
-    const unlock = () => {
-      if (audioRef.current && !isUnlockedRef.current) {
-        audioRef.current.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
-        audioRef.current.play().then(() => {
-          audioRef.current?.pause();
-          isUnlockedRef.current = true;
-        }).catch(() => {});
+    const unlockBothPlayers = () => {
+      if (isUnlockedRef.current) return;
+
+      if (audioRef.current) {
+        audioRef.current.play().catch(() => {});
+        audioRef.current.pause();
       }
-      document.removeEventListener("touchstart", unlock);
-      document.removeEventListener("click", unlock);
+
+      if (ytReadyRef.current && ytPlayerRef.current && ytPlayerRef.current.getPlayerState) {
+        try {
+          ytPlayerRef.current.mute();
+          ytPlayerRef.current.playVideo();
+          setTimeout(() => {
+            ytPlayerRef.current.pauseVideo();
+            ytPlayerRef.current.unMute();
+            isUnlockedRef.current = true;
+          }, 50);
+        } catch (e) {}
+      }
     };
 
-    document.addEventListener("touchstart", unlock, { once: true, passive: true });
-    document.addEventListener("click", unlock, { once: true, passive: true });
+    window.addEventListener("touchstart", unlockBothPlayers, { once: true, passive: true });
+    window.addEventListener("click", unlockBothPlayers, { once: true, passive: true });
 
     return () => {
-      document.removeEventListener("touchstart", unlock);
-      document.removeEventListener("click", unlock);
+      window.removeEventListener("touchstart", unlockBothPlayers);
+      window.removeEventListener("click", unlockBothPlayers);
     };
   }, []);
 
-  // 2. Chargement de la piste
+  // 2. Initialisation YouTube
   useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio || !playingUrl) return;
+    if (!isClient) return;
 
-    setRelayIndex(0); // On réinitialise le relais au premier de la liste
-    audio.pause();
+    const initYT = () => {
+      if (ytPlayerRef.current || !document.getElementById("yt-frame-container")) return;
+      
+      ytPlayerRef.current = new window.YT.Player("yt-frame-container", {
+        width: isMobile ? "250" : "100",
+        height: isMobile ? "250" : "100",
+        playerVars: { 
+          autoplay: 0, 
+          controls: 0, 
+          disablekb: 1, 
+          fs: 0, 
+          playsinline: 1, 
+          rel: 0,
+          modestbranding: 1
+        },
+        events: {
+          onReady: () => {
+            ytReadyRef.current = true;
+            ytPlayerRef.current.setVolume(Math.max(0, Math.min(100, volume * 100)));
+            
+            const id = getYTId(playingUrl);
+            if (id && status === "playing") {
+              ytPlayerRef.current.loadVideoById(id);
+            }
+          },
+          onStateChange: (e: any) => {
+            if (e.data === 0) onEnded();
+            if (e.data === 1) {
+              const d = ytPlayerRef.current.getDuration();
+              if (d && isFinite(d)) onDuration(d);
+            }
+          },
+          onError: (e: any) => {
+            if (e.data === 150 || e.data === 101) {
+              setPlaybackError("Titre bloqué en arrière-plan.");
+            } else {
+              setPlaybackError(`Erreur source (${e.data})`);
+            }
+          }
+        }
+      });
+    };
 
-    if (isDirectAudio(playingUrl)) {
-      audio.src = playingUrl;
+    if (window.YT && window.YT.Player) {
+      initYT();
     } else {
-      const id = getYTId(playingUrl);
-      if (id) {
-        // itag=140 correspond au flux audio M4A universel
-        audio.src = `${AUDIO_RELAYS[0]}/latest_version?id=${id}&itag=140`;
+      window.onYouTubeIframeAPIReady = initYT;
+      if (!document.getElementById("yt-api-script")) {
+        const s = document.createElement("script");
+        s.id = "yt-api-script";
+        s.src = "https://www.youtube.com/iframe_api";
+        document.body.appendChild(s);
       }
     }
+  }, [isClient, isMobile]);
 
-    audio.load();
-    if (status === "playing") {
-      audio.play().catch(() => {});
-    }
-  }, [playingUrl]); // S'exécute uniquement si le morceau change
-
-  // 3. Système de bascule automatique si un relais tombe en panne
-  const handleError = () => {
-    const audio = audioRef.current;
-    if (!audio || !playingUrl || isDirectAudio(playingUrl)) {
-      setPlaybackError("Impossible de lire ce format audio.");
-      return;
-    }
-
-    const id = getYTId(playingUrl);
-    const nextIndex = relayIndex + 1;
-
-    if (id && nextIndex < AUDIO_RELAYS.length) {
-      setRelayIndex(nextIndex);
-      audio.src = `${AUDIO_RELAYS[nextIndex]}/latest_version?id=${id}&itag=140`;
-      audio.load();
-      if (status === "playing") audio.play().catch(() => {});
-    } else {
-      setPlaybackError("Serveurs relais surchargés, réessayez plus tard.");
-    }
-  };
-
-  // 4. Contrôles de base
+  // 3. Changement de musique
   useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    if (status === "playing") audio.play().catch(() => {});
-    else if (status === "paused") audio.pause();
+    if (!playingUrl) return;
+
+    if (isDirectAudio(playingUrl)) {
+      if (ytReadyRef.current && ytPlayerRef.current?.pauseVideo) {
+        ytPlayerRef.current.pauseVideo();
+      }
+      if (audioRef.current) {
+        if (audioRef.current.src !== playingUrl) {
+          audioRef.current.src = playingUrl;
+          audioRef.current.load();
+        }
+        if (status === "playing") audioRef.current.play().catch(() => {});
+      }
+    } else {
+      if (audioRef.current) audioRef.current.pause();
+      
+      const videoId = getYTId(playingUrl);
+      if (videoId && ytReadyRef.current && ytPlayerRef.current?.loadVideoById) {
+        ytPlayerRef.current.loadVideoById(videoId);
+        if (status === "playing") ytPlayerRef.current.playVideo();
+      }
+    }
+  }, [playingUrl]);
+
+  // 4. Play/Pause
+  useEffect(() => {
+    if (isDirectAudio(playingUrl)) {
+      if (status === "playing") audioRef.current?.play().catch(() => {});
+      else if (status === "paused") audioRef.current?.pause();
+    } else {
+      if (!ytReadyRef.current) return;
+      if (status === "playing") ytPlayerRef.current?.playVideo?.();
+      else if (status === "paused") ytPlayerRef.current?.pauseVideo?.();
+    }
   }, [status]);
 
+  // 5. Suivi du temps
+  useEffect(() => {
+    if (status === "playing") {
+      progressIntervalRef.current = setInterval(() => {
+        if (isDirectAudio(playingUrl) && audioRef.current) {
+          onProgress({ playedSeconds: audioRef.current.currentTime || 0 });
+        } else if (ytReadyRef.current && ytPlayerRef.current?.getCurrentTime) {
+          onProgress({ playedSeconds: ytPlayerRef.current.getCurrentTime() || 0 });
+        }
+      }, 500);
+    }
+    return () => clearInterval(progressIntervalRef.current);
+  }, [status, playingUrl]);
+
+  // 6. Volume
   useEffect(() => {
     if (audioRef.current) audioRef.current.volume = Math.max(0, Math.min(1, volume));
+    if (ytReadyRef.current && ytPlayerRef.current?.setVolume) {
+      ytPlayerRef.current.setVolume(Math.max(0, Math.min(100, volume * 100)));
+    }
   }, [volume]);
 
+  // 7. Seek
   useEffect(() => {
-    if (seekRequest !== null && audioRef.current) {
-      audioRef.current.currentTime = seekRequest;
+    if (seekRequest !== null) {
+      if (isDirectAudio(playingUrl) && audioRef.current) {
+        audioRef.current.currentTime = seekRequest;
+      } else if (ytReadyRef.current && ytPlayerRef.current?.seekTo) {
+        ytPlayerRef.current.seekTo(seekRequest, true);
+      }
       clearSeekRequest();
     }
   }, [seekRequest]);
 
   if (!isClient) return null;
 
+  const containerStyle: React.CSSProperties = isMobile
+    ? {
+        position: "fixed",
+        top: "50%",
+        left: "50%",
+        transform: "translate(-50%, -50%)",
+        width: "250px",
+        height: "250px",
+        opacity: 0.001,
+        pointerEvents: "none",
+        zIndex: -50,
+        overflow: "hidden"
+      }
+    : {
+        position: "fixed",
+        bottom: 0,
+        left: "-9999px",
+        width: "100px",
+        height: "100px",
+        opacity: 1, 
+        pointerEvents: "none",
+        zIndex: -1
+      };
+
   return (
-    <audio
-      ref={audioRef}
-      playsInline
-      preload="auto"
-      onTimeUpdate={() => onProgress({ playedSeconds: audioRef.current?.currentTime || 0 })}
-      onDurationChange={() => {
-        const d = audioRef.current?.duration;
-        if (d && isFinite(d)) onDuration(d);
-      }}
-      onEnded={onEnded}
-      onError={handleError}
-      style={{ display: "none" }}
-    />
+    <>
+      <audio ref={audioRef} playsInline preload="auto" onEnded={onEnded} style={{ display: "none" }} />
+      <div style={containerStyle}>
+        <div id="yt-frame-container" />
+      </div>
+    </>
   );
 }
