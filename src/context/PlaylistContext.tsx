@@ -39,16 +39,34 @@ export function PlaylistProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    const { data, error } = await supabase
-      .from("playlists")
-      .select("*")
-      .order("created_at", { ascending: false });
+    try {
+      // 1. Récupération des IDs des playlists partagées avec l'utilisateur
+      const { data: collabData } = await supabase
+        .from("playlist_collaborators")
+        .select("playlist_id")
+        .eq("user_id", user.id);
 
-    if (error) {
-      console.error("Erreur lecture playlists Supabase :", error);
-    } else if (data) {
-      setPlaylists(data);
-      preloadImages(data); 
+      const sharedPlaylistIds = collabData ? collabData.map((c) => c.playlist_id) : [];
+
+      // 2. Requête ciblée : uniquement les playlists de l'utilisateur ou celles partagées avec lui
+      let query = supabase.from("playlists").select("*");
+
+      if (sharedPlaylistIds.length > 0) {
+        query = query.or(`owner_id.eq.${user.id},id.in.(${sharedPlaylistIds.join(",")})`);
+      } else {
+        query = query.eq("owner_id", user.id);
+      }
+
+      const { data, error } = await query.order("created_at", { ascending: false });
+
+      if (error) {
+        console.error("Erreur lecture playlists Supabase :", error);
+      } else if (data) {
+        setPlaylists(data);
+        preloadImages(data); 
+      }
+    } catch (err) {
+      console.error("Crash fetch playlists :", err);
     }
     
     setIsLoaded(true);
@@ -119,6 +137,7 @@ export function PlaylistProvider({ children }: { children: React.ReactNode }) {
     } catch (err) {
       console.error("Crash réseau création playlist :", err);
       setPlaylists((prev) => prev.filter((p) => p.id !== tempPlaylist.id));
+      return null;
     }
   };
 
