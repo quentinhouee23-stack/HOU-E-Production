@@ -52,17 +52,6 @@ export default function HomePage() {
   const hasMiniPlayer = currentTrack !== null;
 
   useEffect(() => {
-    if (typeof document !== 'undefined' && document.body) {
-      document.body.style.overflow = !!trackToAdd ? 'hidden' : '';
-    }
-    return () => { 
-      if (typeof document !== 'undefined' && document.body) {
-        document.body.style.overflow = ''; 
-      }
-    };
-  }, [trackToAdd]);
-
-  useEffect(() => {
     const hour = new Date().getHours();
     setGreeting(hour < 18 ? "Bonjour" : "Bonsoir");
 
