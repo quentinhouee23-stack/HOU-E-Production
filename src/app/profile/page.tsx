@@ -9,7 +9,6 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { Edit2, Check, X, Clock, TrendingUp, LogOut, Users, UserPlus, Search as SearchIcon, UserCheck } from "lucide-react";
 
-// LE RIDEAU D'ANIMATION (Se lève au chargement de la page)
 function PageRevealVeil() {
   const [show, setShow] = useState(true);
 
@@ -26,21 +25,20 @@ function PageRevealVeil() {
         <motion.div
           key="reveal-veil"
           initial={{ y: 0 }}
-          animate={{ y: "-100dvh" }}
+          animate={{ y: "-100vh" }}
           exit={{ opacity: 0 }}
           transition={{
             duration: 0.8,
             ease: [0.34, 1.56, 0.64, 1],
           }}
           className="fixed inset-0 z-[100000] bg-[#121212] touch-none"
-          style={{ width: "100vw", height: "100dvh" }}
+          style={{ width: "100vw", height: "100vh" }}
         />
       )}
     </AnimatePresence>
   );
 }
 
-// PAGE PROFIL PRINCIPALE
 export default function ProfilePage() {
   const { user, signOut } = useAuth();
   const router = useRouter();
@@ -65,7 +63,6 @@ export default function ProfilePage() {
   const [sentRequests, setSentRequests] = useState([]);
 
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
-
   const [avatarLayoutId, setAvatarLayoutId] = useState<string | undefined>("profile-avatar");
 
   useEffect(() => {
@@ -146,6 +143,60 @@ export default function ProfilePage() {
     setLastWeekTracks(safeJSONParse("lastWeekTopTracks", []));
   };
 
+  const fetchFriends = async () => {
+    if (!user) return;
+
+    try {
+      const { data: relations, error } = await supabase
+        .from('friends')
+        .select('id, status, user_id_1, user_id_2')
+        .or(`user_id_1.eq.${user.id},user_id_2.eq.${user.id}`);
+
+      if (error || !relations) return;
+
+      const otherUserIds = relations.map(r => r.user_id_1 === user.id ? r.user_id_2 : r.user_id_1);
+
+      if (otherUserIds.length === 0) {
+        setMyFriends([]);
+        setPendingRequests([]);
+        setSentRequests([]);
+        return;
+      }
+
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('id, username')
+        .in('id', otherUserIds);
+
+      const profilesMap = new Map((profiles || []).map(p => [p.id, p]));
+
+      const accepted = [];
+      const pending = [];
+      const sent = [];
+
+      relations.forEach(rel => {
+        const isSender = rel.user_id_1 === user.id;
+        const targetId = isSender ? rel.user_id_2 : rel.user_id_1;
+        const profile = profilesMap.get(targetId) || { id: targetId, username: "Utilisateur" };
+
+        const friendObj = { ...profile, relId: rel.id };
+
+        if (rel.status === 'accepted') {
+          accepted.push(friendObj);
+        } else if (rel.status === 'pending') {
+          if (isSender) sent.push(friendObj);
+          else pending.push(friendObj);
+        }
+      });
+
+      setMyFriends(accepted);
+      setPendingRequests(pending);
+      setSentRequests(sent);
+    } catch (err) {
+      console.error("Erreur fetchFriends :", err);
+    }
+  };
+
   useEffect(() => {
     if (!user) {
       const timer = setTimeout(() => {
@@ -172,44 +223,6 @@ export default function ProfilePage() {
     window.addEventListener("statsUpdated", loadLocalStats);
     return () => window.removeEventListener("statsUpdated", loadLocalStats);
   }, [user, router]);
-
-  const fetchFriends = async () => {
-    if (!user) return;
-    
-    const { data, error } = await supabase
-      .from('friends')
-      .select(`
-        id,
-        status,
-        sender:user_id_1 ( id, username ),
-        receiver:user_id_2 ( id, username )
-      `)
-      .or(`user_id_1.eq.${user.id},user_id_2.eq.${user.id}`);
-
-    if (error) return;
-
-    const accepted = [];
-    const pending = [];
-    const sent = [];
-
-    data?.forEach(rel => {
-      if (!rel.sender || !rel.receiver) return; 
-
-      const isSender = rel.sender.id === user.id;
-      const otherUser = isSender ? rel.receiver : rel.sender;
-
-      if (rel.status === 'accepted') {
-        accepted.push({ ...otherUser, relId: rel.id });
-      } else if (rel.status === 'pending') {
-        if (isSender) sent.push({ ...otherUser, relId: rel.id });
-        else pending.push({ ...otherUser, relId: rel.id });
-      }
-    });
-
-    setMyFriends(accepted);
-    setPendingRequests(pending);
-    setSentRequests(sent);
-  };
 
   useEffect(() => {
     const searchUsers = async () => {
@@ -272,10 +285,6 @@ export default function ProfilePage() {
   };
 
   const openFriendsModal = () => {
-    const scrollContainer = document.getElementById('profile-scroll-container');
-    if (scrollContainer) {
-      scrollContainer.scrollTo({ top: 0, behavior: "smooth" });
-    }
     setShowFriends(true);
     fetchFriends();
     toggleUI(false);
@@ -309,7 +318,6 @@ export default function ProfilePage() {
         <div className="px-4 pt-[calc(env(safe-area-inset-top)+8rem)] pb-8 max-w-5xl mx-auto space-y-12 w-full flex-1 relative">
           
           <section className="flex flex-col items-center text-center space-y-4 pt-4">
-            
             <motion.div 
               layoutId={avatarLayoutId}
               transition={{ type: "spring", stiffness: 200, damping: 25 }}
@@ -461,9 +469,8 @@ export default function ProfilePage() {
         </div>
 
         <AnimatePresence>
-          {/* MODALE D'AMIS */}
           {showFriends && (
-            <div className="fixed inset-0 z-[9999] flex flex-col justify-end">
+            <div className="fixed inset-0 z-[9999] touch-none">
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -478,12 +485,10 @@ export default function ProfilePage() {
                 exit={{ y: "100%" }}
                 transition={{ type: "spring", damping: 28, stiffness: 300 }}
                 onClick={(e) => e.stopPropagation()}
-                className="relative w-full sm:max-w-md sm:mx-auto bg-[#18181b] rounded-t-[32px] sm:rounded-[32px] flex flex-col border-t sm:border border-white/10 shadow-2xl z-10 h-[75dvh] sm:h-[650px] pb-[calc(env(safe-area-inset-bottom)+1.5rem)]"
+                className="fixed bottom-0 left-0 right-0 max-w-lg mx-auto bg-[#1c1c1e] rounded-t-[32px] flex flex-col border-t border-white/10 shadow-2xl z-10 h-[80vh] pb-[calc(env(safe-area-inset-bottom)+1.5rem)]"
               >
-                {/* Indicateur tiroir mobile */}
-                <div className="w-12 h-1.5 bg-white/20 rounded-full mx-auto mt-3 mb-1 shrink-0 sm:hidden" />
+                <div className="w-12 h-1.5 bg-white/20 rounded-full mx-auto mt-3 mb-1 shrink-0" />
 
-                {/* Header */}
                 <div className="flex items-center justify-between p-6 border-b border-white/5 shrink-0">
                   <h2 className="text-2xl font-black text-white">Social</h2>
                   <button
@@ -494,7 +499,6 @@ export default function ProfilePage() {
                   </button>
                 </div>
 
-                {/* Tabs */}
                 <div className="flex border-b border-white/5 shrink-0">
                   <button
                     onClick={() => setActiveTab("friends")}
@@ -510,7 +514,6 @@ export default function ProfilePage() {
                   </button>
                 </div>
 
-                {/* Scrollable content */}
                 <div className="flex-1 overflow-y-auto p-4 custom-scrollbar overscroll-contain">
                   {activeTab === "search" && (
                     <div className="space-y-4">
@@ -621,7 +624,6 @@ export default function ProfilePage() {
             </div>
           )}
 
-          {/* MODALE DE DÉCONNEXION */}
           {showLogoutConfirm && (
             <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 backdrop-blur-md px-4">
               <motion.div
