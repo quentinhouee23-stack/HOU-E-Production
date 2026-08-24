@@ -24,8 +24,6 @@ export function Player() {
   } = useMusic();
 
   const [isClient, setIsClient] = useState(false);
-  const [isMobile, setIsMobile] = useState(false);
-  
   const audioRef = useRef<HTMLAudioElement>(null);
   const ytPlayerRef = useRef<any>(null);
   const ytReadyRef = useRef(false);
@@ -34,7 +32,6 @@ export function Player() {
 
   useEffect(() => {
     setIsClient(true);
-    setIsMobile(/iPhone|iPad|iPod|Android/i.test(navigator.userAgent));
   }, []);
 
   const isDirectAudio = (url: string | null) => {
@@ -49,9 +46,9 @@ export function Player() {
     return m ? m[1] : null;
   };
 
-  // 1. Déverrouillage strict
+  // 1. Déverrouillage iOS synchrone global
   useEffect(() => {
-    const unlockBothPlayers = () => {
+    const unlock = () => {
       if (isUnlockedRef.current) return;
 
       if (audioRef.current) {
@@ -59,25 +56,22 @@ export function Player() {
         audioRef.current.pause();
       }
 
-      if (ytReadyRef.current && ytPlayerRef.current && ytPlayerRef.current.getPlayerState) {
+      if (ytReadyRef.current && ytPlayerRef.current && ytPlayerRef.current.playVideo) {
         try {
           ytPlayerRef.current.mute();
           ytPlayerRef.current.playVideo();
-          setTimeout(() => {
-            ytPlayerRef.current.pauseVideo();
-            ytPlayerRef.current.unMute();
-            isUnlockedRef.current = true;
-          }, 50);
+          ytPlayerRef.current.pauseVideo();
+          ytPlayerRef.current.unMute();
+          isUnlockedRef.current = true;
         } catch (e) {}
       }
     };
 
-    window.addEventListener("touchstart", unlockBothPlayers, { once: true, passive: true });
-    window.addEventListener("click", unlockBothPlayers, { once: true, passive: true });
+    const events = ["touchstart", "touchend", "click"];
+    events.forEach(e => document.addEventListener(e, unlock, { once: true, passive: true }));
 
     return () => {
-      window.removeEventListener("touchstart", unlockBothPlayers);
-      window.removeEventListener("click", unlockBothPlayers);
+      events.forEach(e => document.removeEventListener(e, unlock));
     };
   }, []);
 
@@ -89,8 +83,8 @@ export function Player() {
       if (ytPlayerRef.current || !document.getElementById("yt-frame-container")) return;
       
       ytPlayerRef.current = new window.YT.Player("yt-frame-container", {
-        width: isMobile ? "250" : "100",
-        height: isMobile ? "250" : "100",
+        width: "250",
+        height: "250",
         playerVars: { 
           autoplay: 0, 
           controls: 0, 
@@ -120,8 +114,6 @@ export function Player() {
           onError: (e: any) => {
             if (e.data === 150 || e.data === 101) {
               setPlaybackError("Titre bloqué en arrière-plan.");
-            } else {
-              setPlaybackError(`Erreur source (${e.data})`);
             }
           }
         }
@@ -139,7 +131,7 @@ export function Player() {
         document.body.appendChild(s);
       }
     }
-  }, [isClient, isMobile]);
+  }, [isClient]);
 
   // 3. Changement de musique
   useEffect(() => {
@@ -215,34 +207,21 @@ export function Player() {
 
   if (!isClient) return null;
 
-  const containerStyle: React.CSSProperties = isMobile
-    ? {
-        position: "fixed",
-        top: "50%",
-        left: "50%",
-        transform: "translate(-50%, -50%)",
-        width: "250px",
-        height: "250px",
-        opacity: 0.001,
-        pointerEvents: "none",
-        zIndex: -50,
-        overflow: "hidden"
-      }
-    : {
-        position: "fixed",
-        bottom: 0,
-        left: "-9999px",
-        width: "100px",
-        height: "100px",
-        opacity: 1, 
-        pointerEvents: "none",
-        zIndex: -1
-      };
-
   return (
     <>
       <audio ref={audioRef} playsInline preload="auto" onEnded={onEnded} style={{ display: "none" }} />
-      <div style={containerStyle}>
+      <div
+        style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          width: "250px",
+          height: "250px",
+          pointerEvents: "none",
+          zIndex: -50,
+          clipPath: "inset(100%)"
+        }}
+      >
         <div id="yt-frame-container" />
       </div>
     </>
