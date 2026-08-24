@@ -144,7 +144,6 @@ export default function ProfilePage() {
     setLastWeekTracks(safeJSONParse("lastWeekTopTracks", []));
   };
 
-  // 🟢 FIX 2 : On passe l'ID de l'utilisateur explicitement pour éviter la désynchronisation au login
   const fetchFriends = async (currentUserId = user?.id) => {
     if (!currentUserId) return;
 
@@ -216,7 +215,6 @@ export default function ProfilePage() {
         username: currentName
       });
       
-      // On passe l'ID directement au premier chargement
       fetchFriends(user.id);
     };
 
@@ -472,23 +470,26 @@ export default function ProfilePage() {
         </div>
 
         <AnimatePresence>
+          {/* L'Architecture 100% robuste anti-trou noir */}
           {showFriends && (
-            <div className="fixed inset-0 z-[9999] touch-none">
+            <>
+              {/* Le Backdrop est complètement séparé de la modale */}
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 onClick={closeFriendsModal}
-                className="absolute inset-0 bg-black/80 backdrop-blur-md"
+                className="fixed inset-0 z-[9998] bg-black/80 backdrop-blur-md touch-none"
               />
 
+              {/* La modale est fixée directement à la fenêtre (bottom-0 absolu) */}
               <motion.div
                 initial={{ y: "100%" }}
                 animate={{ y: 0 }}
                 exit={{ y: "100%" }}
                 transition={{ type: "spring", damping: 28, stiffness: 300 }}
                 onClick={(e) => e.stopPropagation()}
-                className="absolute bottom-0 left-0 right-0 w-full max-w-lg mx-auto bg-[#1c1c1e] rounded-t-[32px] flex flex-col border-t border-white/10 shadow-2xl z-10"
+                className="fixed bottom-0 left-0 right-0 w-full max-w-lg mx-auto bg-[#1c1c1e] rounded-t-[32px] flex flex-col shadow-2xl z-[9999]"
                 style={{ height: "85dvh" }}
               >
                 <div className="w-12 h-1.5 bg-white/20 rounded-full mx-auto mt-3 mb-1 shrink-0" />
@@ -625,10 +626,10 @@ export default function ProfilePage() {
                   )}
                 </div>
 
-                {/* 🟢 FIX 1 : LE BLOC MAGIQUE POUR IOS (Cache le trou d'espace safe-area-bottom) */}
-                <div className="absolute top-full left-0 right-0 h-40 bg-[#1c1c1e] z-10" />
+                {/* LE BOUCLIER IOS MAGIQUE QUI BLOQUE L'ESPACE VIDE */}
+                <div className="absolute top-full left-0 right-0 h-[50vh] bg-[#1c1c1e] pointer-events-none" />
               </motion.div>
-            </div>
+            </>
           )}
 
           {showLogoutConfirm && (
