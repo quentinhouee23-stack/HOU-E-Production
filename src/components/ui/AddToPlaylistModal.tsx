@@ -7,51 +7,25 @@ import { usePlaylists } from "@/context/PlaylistContext";
 import { X, Music } from "lucide-react";
 
 export function AddToPlaylistModal({ track, isOpen, onClose }) {
-  const { playlists, createPlaylist, updatePlaylist } = usePlaylists();
+  const { playlists, createPlaylist, addTrackToPlaylist } = usePlaylists();
   const [newPlaylistName, setNewPlaylistName] = useState("");
-  
-  // 🟢 On sauvegarde le son en mémoire pour que la modale puisse se fermer en douceur
-  const [cachedTrack, setCachedTrack] = useState(null);
-  
-  // 🟢 Bouclier anti-clic instantané (pour éviter la fermeture immédiate à l'ouverture)
-  const [canClose, setCanClose] = useState(false);
+  const [activeTrack, setActiveTrack] = useState(null);
 
   useEffect(() => {
-    if (track) setCachedTrack(track);
+    if (track) setActiveTrack(track);
   }, [track]);
 
-  const currentTrack = track || cachedTrack;
-
-  useEffect(() => {
-    if (isOpen) {
-      setCanClose(false);
-      // On bloque la fermeture pendant un tiers de seconde à l'ouverture
-      const timer = setTimeout(() => setCanClose(true), 300);
-      return () => clearTimeout(timer);
-    } else {
-      setNewPlaylistName(""); 
-    }
-  }, [isOpen]);
-
-  const safeClose = () => {
-    if (canClose) onClose();
-  };
-
   const handleAddToExisting = (playlistId) => {
-    const targetPlaylist = playlists?.find((p) => p.id === playlistId);
-    if (targetPlaylist && currentTrack) {
-      const currentTracks = targetPlaylist.tracks || [];
-      if (!currentTracks.find((t) => t.id === currentTrack.id)) {
-        updatePlaylist(targetPlaylist.id, { tracks: [...currentTracks, currentTrack] });
-      }
-    }
-    onClose(); 
+    if (!activeTrack) return;
+    // On utilise directement la fonction dédiée du contexte pour éviter les erreurs de format
+    addTrackToPlaylist(playlistId, activeTrack);
+    onClose();
   };
 
   const handleCreateNew = async () => {
-    if (!newPlaylistName.trim() || !currentTrack) return;
+    if (!newPlaylistName.trim() || !activeTrack) return;
     try {
-      await createPlaylist(newPlaylistName.trim(), [currentTrack]);
+      await createPlaylist(newPlaylistName.trim(), [activeTrack]);
       setNewPlaylistName(""); 
       onClose(); 
     } catch (err) {
@@ -68,19 +42,16 @@ export function AddToPlaylistModal({ track, isOpen, onClose }) {
 
   return (
     <AnimatePresence>
-      {isOpen && currentTrack && (
+      {isOpen && activeTrack && (
         <>
-          {/* 1. LE FOND SOMBRE (TOTALEMENT SÉPARÉ) */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            onClick={safeClose}
+            onClick={onClose}
             className="fixed inset-0 z-[9998] bg-black/80 backdrop-blur-sm"
-            style={{ touchAction: "none" }}
           />
 
-          {/* 2. LA MODALE (FIXÉE EN BAS DE L'ÉCRAN) */}
           <motion.div
             initial={{ y: "100%" }}
             animate={{ y: "0%" }}
@@ -88,25 +59,23 @@ export function AddToPlaylistModal({ track, isOpen, onClose }) {
             transition={{ type: "spring", damping: 25, stiffness: 250 }}
             className="fixed bottom-0 left-0 right-0 z-[9999] w-full max-w-lg mx-auto bg-[#1c1c1e] rounded-t-[32px] flex flex-col shadow-2xl p-6 pb-[calc(env(safe-area-inset-bottom)+2rem)]"
             style={{ maxHeight: "85dvh" }}
+            onClick={(e) => e.stopPropagation()}
           >
-            {/* Décoration (Drag handle) */}
             <div className="w-12 h-1.5 bg-white/20 rounded-full mx-auto mt-2 mb-6 shrink-0" />
 
-            {/* En-tête */}
             <div className="flex justify-between items-center mb-6 shrink-0">
               <div className="overflow-hidden pr-4">
                 <h3 className="text-2xl font-black text-white">Ajouter à…</h3>
-                <p className="text-sm text-[#1db954] truncate mt-1">{currentTrack.title}</p>
+                <p className="text-sm text-[#1db954] truncate mt-1">{activeTrack.title}</p>
               </div>
               <button 
-                onClick={safeClose} 
+                onClick={onClose} 
                 className="w-10 h-10 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center transition-colors shrink-0"
               >
                 <X className="w-5 h-5 text-white" />
               </button>
             </div>
 
-            {/* Liste des playlists existantes */}
             <div className="overflow-y-auto flex-1 mb-6 custom-scrollbar pr-2">
               {playlists && playlists.length > 0 ? (
                 <div className="space-y-2">
@@ -137,7 +106,6 @@ export function AddToPlaylistModal({ track, isOpen, onClose }) {
               )}
             </div>
 
-            {/* Créer une nouvelle playlist */}
             <div className="shrink-0 border-t border-white/10 pt-6">
               <p className="text-sm font-bold text-white/70 mb-3">Nouvelle playlist :</p>
               <div className="flex gap-2">
