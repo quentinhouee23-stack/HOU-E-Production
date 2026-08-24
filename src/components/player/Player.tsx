@@ -24,12 +24,19 @@ export function Player() {
   } = useMusic();
 
   const [isClient, setIsClient] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+  
   const audioRef = useRef<HTMLAudioElement>(null);
   const ytPlayerRef = useRef<any>(null);
   const ytReadyRef = useRef(false);
+  const isUnlockedRef = useRef(false);
   const progressIntervalRef = useRef<any>(null);
 
-  useEffect(() => setIsClient(true), []);
+  useEffect(() => {
+    setIsClient(true);
+    // Détection basique pour adapter le camouflage (sans casser l'hydratation Next.js)
+    setIsMobile(/iPhone|iPad|iPod|Android/i.test(navigator.userAgent));
+  }, []);
 
   const isDirectAudio = (url: string | null) => {
     if (!url) return false;
@@ -43,40 +50,80 @@ export function Player() {
     return m ? m[1] : null;
   };
 
-  // 1. Initialisation Iframe YouTube
+  // 1. Déverrouillage strict
+  useEffect(() => {
+    const unlockBothPlayers = () => {
+      if (isUnlockedRef.current) return;
+
+      if (audioRef.current) {
+        audioRef.current.play().catch(() => {});
+        audioRef.current.pause();
+      }
+
+      if (ytReadyRef.current && ytPlayerRef.current && ytPlayerRef.current.getPlayerState) {
+        try {
+          ytPlayerRef.current.mute();
+          ytPlayerRef.current.playVideo();
+          setTimeout(() => {
+            ytPlayerRef.current.pauseVideo();
+            ytPlayerRef.current.unMute();
+            isUnlockedRef.current = true;
+          }, 50);
+        } catch (e) {}
+      }
+    };
+
+    window.addEventListener("touchstart", unlockBothPlayers, { once: true, passive: true });
+    window.addEventListener("click", unlockBothPlayers, { once: true, passive: true });
+
+    return () => {
+      window.removeEventListener("touchstart", unlockBothPlayers);
+      window.removeEventListener("click", unlockBothPlayers);
+    };
+  }, []);
+
+  // 2. Initialisation YouTube
   useEffect(() => {
     if (!isClient) return;
 
     const initYT = () => {
-      if (ytPlayerRef.current || !document.getElementById("yt-frame")) return;
-      ytPlayerRef.current = new window.YT.Player("yt-frame", {
-        width: "100",
-        height: "100",
-        playerVars: { autoplay: 0, controls: 0, disablekb: 1, fs: 0, playsinline: 1 },
+      if (ytPlayerRef.current || !document.getElementById("yt-frame-container")) return;
+      
+      ytPlayerRef.current = new window.YT.Player("yt-frame-container", {
+        // Dimensions adaptées selon l'appareil pour passer les sécurités sans alerter les Adblockers PC
+        width: isMobile ? "250" : "100",
+        height: isMobile ? "250" : "100",
+        playerVars: { 
+          autoplay: 0, 
+          controls: 0, 
+          disablekb: 1, 
+          fs: 0, 
+          playsinline: 1, 
+          rel: 0,
+          modestbranding: 1
+        },
         events: {
           onReady: () => {
             ytReadyRef.current = true;
-            ytPlayerRef.current.setVolume(volume * 100);
+            ytPlayerRef.current.setVolume(Math.max(0, Math.min(100, volume * 100)));
             
-            // Lancer la lecture si un morceau est déjà en attente
-            if (playingUrl && !isDirectAudio(playingUrl)) {
-              const id = getYTId(playingUrl);
-              if (id) {
-                ytPlayerRef.current.loadVideoById(id);
-                if (status === "playing") ytPlayerRef.current.playVideo();
-              }
+            const id = getYTId(playingUrl);
+            if (id && status === "playing") {
+              ytPlayerRef.current.loadVideoById(id);
             }
           },
           onStateChange: (e: any) => {
             if (e.data === 0) onEnded();
             if (e.data === 1) {
               const d = ytPlayerRef.current.getDuration();
-              if (d) onDuration(d);
+              if (d && isFinite(d)) onDuration(d);
             }
           },
           onError: (e: any) => {
-            if (setPlaybackError) {
-              setPlaybackError(`Erreur de lecture (${e.data})`);
+            if (e.data === 150 || e.data === 101) {
+              setPlaybackError("Titre bloqué en arrière-plan.");
+            } else {
+              setPlaybackError(`Erreur source (${e.data})`);
             }
           }
         }
@@ -87,48 +134,16 @@ export function Player() {
       initYT();
     } else {
       window.onYouTubeIframeAPIReady = initYT;
-      if (!document.getElementById("yt-script")) {
+      if (!document.getElementById("yt-api-script")) {
         const s = document.createElement("script");
-        s.id = "yt-script";
+        s.id = "yt-api-script";
         s.src = "https://www.youtube.com/iframe_api";
-        document.head.appendChild(s);
+        document.body.appendChild(s);
       }
     }
-  }, [isClient]);
+  }, [isClient, isMobile]);
 
-  // 2. Déverrouillage de sécurité iOS
-  useEffect(() => {
-    const unlock = () => {
-      if (audioRef.current) {
-        audioRef.current.play().catch(() => {});
-        audioRef.current.pause();
-      }
-      if (ytReadyRef.current && ytPlayerRef.current) {
-        ytPlayerRef.current.mute();
-        ytPlayerRef.current.playVideo();
-        ytPlayerRef.current.pauseVideo();
-        ytPlayerRef.current.unMute();
-      }
-    };
-    
-    const onClick = () => {
-      unlock();
-      if (ytReadyRef.current) {
-        document.removeEventListener("click", onClick);
-        document.removeEventListener("touchstart", onClick);
-      }
-    };
-    
-    document.addEventListener("click", onClick);
-    document.addEventListener("touchstart", onClick);
-    
-    return () => {
-      document.removeEventListener("click", onClick);
-      document.removeEventListener("touchstart", onClick);
-    };
-  }, []);
-
-  // 3. Gestion de la piste active
+  // 3. Changement de musique
   useEffect(() => {
     if (!playingUrl) return;
 
@@ -142,45 +157,53 @@ export function Player() {
           audioRef.current.load();
         }
         if (status === "playing") audioRef.current.play().catch(() => {});
-        else audioRef.current.pause();
       }
     } else {
       if (audioRef.current) audioRef.current.pause();
-      const videoId = getYTId(playingUrl);
       
-      if (videoId && ytReadyRef.current) {
-        const currentUrl = ytPlayerRef.current.getVideoUrl?.() || "";
-        if (!currentUrl.includes(videoId)) {
-          ytPlayerRef.current.loadVideoById(videoId);
-        }
+      const videoId = getYTId(playingUrl);
+      if (videoId && ytReadyRef.current && ytPlayerRef.current?.loadVideoById) {
+        ytPlayerRef.current.loadVideoById(videoId);
         if (status === "playing") ytPlayerRef.current.playVideo();
-        else ytPlayerRef.current.pauseVideo();
       }
     }
-  }, [playingUrl, status]);
+  }, [playingUrl]);
 
-  // 4. Barre de progression
+  // 4. Play/Pause
+  useEffect(() => {
+    if (isDirectAudio(playingUrl)) {
+      if (status === "playing") audioRef.current?.play().catch(() => {});
+      else if (status === "paused") audioRef.current?.pause();
+    } else {
+      if (!ytReadyRef.current) return;
+      if (status === "playing") ytPlayerRef.current?.playVideo?.();
+      else if (status === "paused") ytPlayerRef.current?.pauseVideo?.();
+    }
+  }, [status]);
+
+  // 5. Suivi du temps
   useEffect(() => {
     if (status === "playing") {
       progressIntervalRef.current = setInterval(() => {
         if (isDirectAudio(playingUrl) && audioRef.current) {
-          onProgress({ playedSeconds: audioRef.current.currentTime });
+          onProgress({ playedSeconds: audioRef.current.currentTime || 0 });
         } else if (ytReadyRef.current && ytPlayerRef.current?.getCurrentTime) {
-          onProgress({ playedSeconds: ytPlayerRef.current.getCurrentTime() });
+          onProgress({ playedSeconds: ytPlayerRef.current.getCurrentTime() || 0 });
         }
       }, 500);
     }
     return () => clearInterval(progressIntervalRef.current);
   }, [status, playingUrl]);
 
-  // 5. Volume et Barre de recherche temporelle (Seek)
+  // 6. Volume
   useEffect(() => {
-    if (audioRef.current) audioRef.current.volume = volume;
+    if (audioRef.current) audioRef.current.volume = Math.max(0, Math.min(1, volume));
     if (ytReadyRef.current && ytPlayerRef.current?.setVolume) {
-      ytPlayerRef.current.setVolume(volume * 100);
+      ytPlayerRef.current.setVolume(Math.max(0, Math.min(100, volume * 100)));
     }
   }, [volume]);
 
+  // 7. Seek
   useEffect(() => {
     if (seekRequest !== null) {
       if (isDirectAudio(playingUrl) && audioRef.current) {
@@ -194,25 +217,36 @@ export function Player() {
 
   if (!isClient) return null;
 
+  // Styles dynamiques pour satisfaire les PC (Adblockers) et iOS (WebKit)
+  const containerStyle: React.CSSProperties = isMobile
+    ? {
+        position: "fixed",
+        top: "50%",
+        left: "50%",
+        transform: "translate(-50%, -50%)",
+        width: "250px",
+        height: "250px",
+        opacity: 0.001,
+        pointerEvents: "none",
+        zIndex: -50,
+        overflow: "hidden"
+      }
+    : {
+        position: "fixed",
+        bottom: 0,
+        left: "-9999px",
+        width: "100px",
+        height: "100px",
+        opacity: 1, 
+        pointerEvents: "none",
+        zIndex: -1
+      };
+
   return (
     <>
-      {/* Lecteur MP3 natif */}
-      <audio ref={audioRef} playsInline onEnded={onEnded} style={{ display: "none" }} />
-      
-      {/* Lecteur YouTube : Dimensionné pour WebKit, mais camouflé derrière l'UI */}
-      <div
-        style={{
-          position: "fixed",
-          top: 0,
-          left: 0,
-          width: "100px",
-          height: "100px",
-          opacity: 0.01,
-          pointerEvents: "none",
-          zIndex: -9999
-        }}
-      >
-        <div id="yt-frame" />
+      <audio ref={audioRef} playsInline preload="auto" onEnded={onEnded} style={{ display: "none" }} />
+      <div style={containerStyle}>
+        <div id="yt-frame-container" />
       </div>
     </>
   );
