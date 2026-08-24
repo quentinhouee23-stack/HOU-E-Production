@@ -21,7 +21,7 @@ export default function LoginPage() {
 
   // Si l'utilisateur est déjà connecté, on le renvoie sur son profil
   useEffect(() => {
-    if (user) router.push("/profile");
+    if (user) router.push("/");
   }, [user, router]);
 
   const handleSubmit = async (e) => {
