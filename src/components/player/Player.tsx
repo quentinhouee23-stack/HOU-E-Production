@@ -21,6 +21,11 @@ export function Player() {
     seekRequest,
     clearSeekRequest,
     setPlaybackError,
+    // 🟢 AJOUT : On récupère les infos de la piste et les contrôles pour l'écran de verrouillage
+    currentTrack, 
+    togglePlay,   
+    playNext,     
+    playPrev      
   } = useMusic();
 
   const [isClient, setIsClient] = useState(false);
@@ -204,6 +209,57 @@ export function Player() {
       clearSeekRequest();
     }
   }, [seekRequest]);
+
+  // 🟢 8. MEDIA SESSION API (ÉCRAN DE VERROUILLAGE & ARRIÈRE-PLAN)
+  useEffect(() => {
+    if ("mediaSession" in navigator && currentTrack) {
+      // Met à jour les infos affichées sur l'écran de verrouillage
+      navigator.mediaSession.metadata = new window.MediaMetadata({
+        title: currentTrack.title || "Titre inconnu",
+        artist: currentTrack.artist || "Artiste inconnu",
+        album: "HOUÉE",
+        artwork: [
+          { src: currentTrack.coverUrl || "/logo.png", sizes: "512x512", type: "image/png" }
+        ]
+      });
+
+      // Connecte les boutons de l'écran de verrouillage à tes fonctions
+      navigator.mediaSession.setActionHandler("play", () => {
+        if (togglePlay) togglePlay();
+      });
+      navigator.mediaSession.setActionHandler("pause", () => {
+        if (togglePlay) togglePlay();
+      });
+      navigator.mediaSession.setActionHandler("previoustrack", () => {
+        if (playPrev) playPrev();
+      });
+      navigator.mediaSession.setActionHandler("nexttrack", () => {
+        if (playNext) playNext();
+      });
+      
+      // Gestion de la barre de progression sur l'écran de verrouillage
+      navigator.mediaSession.setActionHandler("seekto", (details) => {
+        if (details.seekTime && onProgress) {
+           if (isDirectAudio(playingUrl) && audioRef.current) {
+             audioRef.current.currentTime = details.seekTime;
+           } else if (ytReadyRef.current && ytPlayerRef.current?.seekTo) {
+             ytPlayerRef.current.seekTo(details.seekTime, true);
+           }
+        }
+      });
+    }
+    
+    // Nettoyage si on démonte le player
+    return () => {
+      if ("mediaSession" in navigator) {
+        navigator.mediaSession.setActionHandler("play", null);
+        navigator.mediaSession.setActionHandler("pause", null);
+        navigator.mediaSession.setActionHandler("previoustrack", null);
+        navigator.mediaSession.setActionHandler("nexttrack", null);
+        navigator.mediaSession.setActionHandler("seekto", null);
+      }
+    };
+  }, [currentTrack, togglePlay, playNext, playPrev, playingUrl]);
 
   if (!isClient) return null;
 
