@@ -9,10 +9,6 @@ import { FullScreenPlayer } from "@/components/player/FullScreenPlayer";
 import { MiniPlayer } from "@/components/player/MiniPlayer";
 import { Player } from "@/components/player/Player";
 import { ImportModal } from "@/components/modals/ImportModal"; 
-import { SplashScreen } from "@/components/ui/SplashScreen";
-import { OrientationLock } from "@/components/ui/OrientationLock";
-import { NetworkStatus } from "@/components/ui/NetworkStatus"; 
-import { AnimationProvider } from "@/components/ui/AnimationProvider"; 
 import "./globals.css";
 
 const plusJakarta = Plus_Jakarta_Sans({
@@ -63,24 +59,14 @@ export default function RootLayout({
         <AuthProvider>  
           <MusicProvider>
             <PlaylistProvider>
-              
-              <OrientationLock />
-              <NetworkStatus />
-
-              <SplashScreen>
-                <AnimationProvider>
-                  <main className="min-h-screen main-content-padding">
-                    {children}
-                  </main>
-                  
-                  <Player />
-                  <MiniPlayer />
-                  <FullScreenPlayer />
-                  <ImportModal />
-                  <LiquidGlassNav />
-                </AnimationProvider>
-              </SplashScreen>
-
+              <main className="min-h-screen main-content-padding">
+                {children}
+              </main>
+              <Player />
+              <MiniPlayer />
+              <FullScreenPlayer />
+              <ImportModal />
+              <LiquidGlassNav />
             </PlaylistProvider>
           </MusicProvider>
         </AuthProvider>

@@ -10,7 +10,7 @@ import GlassSurface from "./GlassSurface";
 
 // ─── Nav items ────────────────────────────────────────────────────────────────
 const NAV_ITEMS = [
-  { href: "/",       label: "Accueil",     Icon: Home,      isSearch: false },
+  { href: "/",      label: "Accueil",    Icon: Home,      isSearch: false },
   { href: "/discover",  label: "Découverte", Icon: Compass,   isSearch: false },
   { href: "/playlists", label: "Playlists",  Icon: ListMusic, isSearch: false },
   { href: "/search",    label: "Recherche",  Icon: Search,    isSearch: true  },
@@ -304,7 +304,7 @@ export function LiquidGlassNav() {
           animate={{ y: 0,   opacity: 1 }}
           exit={{    y: 120, opacity: 0 }}
           transition={{ type: "spring", stiffness: 370, damping: 32 }}
-          className="fixed left-1/2 -translate-x-1/2 w-[92%] max-w-md z-[100] select-none"
+          className="fixed left-1/2 -translate-x-1/2 w-[92%] max-w-md z-[100] select-none pb-[env(safe-area-inset-bottom)]"
           style={{ 
             // 🟢 COLLÉ TOUT EN BAS COMME APPLE MUSIC (utilisation directe de safe-area sans marge superflue)
             bottom: "20px"
