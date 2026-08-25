@@ -304,10 +304,10 @@ export function LiquidGlassNav() {
           animate={{ y: 0,   opacity: 1 }}
           exit={{    y: 120, opacity: 0 }}
           transition={{ type: "spring", stiffness: 370, damping: 32 }}
-          className="fixed left-1/2 -translate-x-1/2 w-[92%] max-w-md z-[100] select-none pb-[env(safe-area-inset-bottom)]"
+          className="fixed left-1/2 -translate-x-1/2 w-[92%] max-w-md z-[100] select-none"
           style={{ 
             // 🟢 COLLÉ TOUT EN BAS COMME APPLE MUSIC (utilisation directe de safe-area sans marge superflue)
-            bottom: "20px"
+            bottom: "calc(20px + env(safe-area-inset-bottom))"
           }}
         >
           <div
