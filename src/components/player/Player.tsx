@@ -236,7 +236,7 @@ export function Player() {
       });
       
       navigator.mediaSession.setActionHandler("seekto", (details) => {
-        if (details.seekTime && onProgress) {
+        if (details.seekTime) {
            if (isDirectAudio(playingUrl) && audioRef.current) {
              audioRef.current.currentTime = details.seekTime;
            } else if (ytReadyRef.current && ytPlayerRef.current?.seekTo) {
